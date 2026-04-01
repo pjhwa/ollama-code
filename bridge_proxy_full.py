@@ -399,21 +399,34 @@ class RagContextInjector:
         cached = self._embed_cache.get(text)
         if cached:
             return cached
-        try:
-            body = json.dumps({"model": self._cfg.embed_model, "prompt": text}).encode()
-            req = urllib.request.Request(
-                f"{self._cfg.ollama_host}/api/embeddings",
-                data=body,
-                headers={"Content-Type": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read())
-            emb = data.get("embedding", [])
-            self._embed_cache[text] = emb
-            return emb
-        except Exception as e:
-            log.warning("RAG: embed failed: %s", e)
-            return []
+        # Try new endpoint first (/api/embed, Ollama ≥0.1.26), fall back to legacy
+        for endpoint, body_dict in [
+            ("/api/embed",       {"model": self._cfg.embed_model, "input": text}),
+            ("/api/embeddings",  {"model": self._cfg.embed_model, "prompt": text}),
+        ]:
+            try:
+                body = json.dumps(body_dict).encode()
+                req = urllib.request.Request(
+                    f"{self._cfg.ollama_host}{endpoint}",
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read())
+                # /api/embed returns {"embeddings": [[...]]}
+                # /api/embeddings returns {"embedding": [...]}
+                emb = (
+                    (data.get("embeddings") or [[]])[0]
+                    if "embeddings" in data
+                    else data.get("embedding", [])
+                )
+                if emb:
+                    self._embed_cache[text] = emb
+                    return emb
+            except Exception as e:
+                log.debug("RAG: embed %s failed: %s", endpoint, e)
+        log.warning("RAG: embed failed for both /api/embed and /api/embeddings")
+        return []
 
     def _chunk_text(self, text: str) -> list[str]:
         size = self._cfg.rag_chunk_size
@@ -695,14 +708,15 @@ class UltraPlan:
                 "model": self._model,
                 "messages": [{"role": "user", "content": plan_prompt}],
                 "stream": False,
-                "options": {"temperature": 0.2, "num_ctx": 4096},
+                # think:false — disable Qwen3 thinking mode for fast meta-calls
+                "options": {"temperature": 0.2, "num_ctx": 4096, "num_predict": 512, "think": False},
             }).encode()
             req = urllib.request.Request(
                 f"{self._ollama_host}/v1/chat/completions",
                 data=body,
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=90) as resp:
                 data = json.loads(resp.read())
             return data["choices"][0]["message"]["content"]
         except Exception as e:
@@ -744,14 +758,15 @@ class CoordinatorMode:
                 "model": self._model,
                 "messages": [{"role": "user", "content": decomp_prompt}],
                 "stream": False,
-                "options": {"temperature": 0.1, "num_ctx": 2048},
+                # think:false — disable Qwen3 thinking mode for fast meta-calls
+                "options": {"temperature": 0.1, "num_ctx": 2048, "num_predict": 256, "think": False},
             }).encode()
             req = urllib.request.Request(
                 f"{self._ollama_host}/v1/chat/completions",
                 data=body,
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 data = json.loads(resp.read())
             content = data["choices"][0]["message"]["content"].strip()
             # Extract JSON array
@@ -817,7 +832,7 @@ class VerificationAgent:
                 "model": self._cfg.verify_model,
                 "messages": [{"role": "user", "content": verify_prompt}],
                 "stream": False,
-                "options": {"temperature": 0.1, "num_ctx": 4096},
+                "options": {"temperature": 0.1, "num_ctx": 4096, "num_predict": 100, "think": False},
             }).encode()
             req = urllib.request.Request(
                 f"{self._ollama_host}/v1/chat/completions",
@@ -885,14 +900,14 @@ class ConversationCompactor:
                 "model": self._model,
                 "messages": [{"role": "user", "content": summary_prompt}],
                 "stream": False,
-                "options": {"temperature": 0.1, "num_ctx": 4096},
+                "options": {"temperature": 0.1, "num_ctx": 4096, "num_predict": 600, "think": False},
             }).encode()
             req_obj = urllib.request.Request(
                 f"{self._ollama_host}/v1/chat/completions",
                 data=body,
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req_obj, timeout=60) as resp:
+            with urllib.request.urlopen(req_obj, timeout=90) as resp:
                 data = json.loads(resp.read())
             summary = data["choices"][0]["message"]["content"].strip()
         except Exception as e:
