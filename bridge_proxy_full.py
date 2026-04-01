@@ -100,6 +100,12 @@ class ProxyConfig:
     # VERIFICATION
     verification_min_tokens: int = 200   # only verify if response this long
 
+    # COMPACTION
+    enable_compaction: bool = True
+    compaction_max_tokens: int = 24000
+    compaction_target_tokens: int = 8000
+    compaction_min_turns: int = 6
+
     # Qwen3 / Thinking models
     enable_thinking: bool = True
     thinking_budget_tokens: int = 8192
@@ -777,6 +783,85 @@ class VerificationAgent:
 
 
 # ---------------------------------------------------------------------------
+# ConversationCompactor — summarize old turns to stay within context window
+# ---------------------------------------------------------------------------
+class ConversationCompactor:
+    def __init__(self, config: ProxyConfig, ollama_host: str, model: str):
+        self._cfg = config
+        self._ollama_host = ollama_host
+        self._model = model
+
+    def estimate_tokens(self, messages: list[dict]) -> int:
+        total = 0
+        for m in messages:
+            content = m.get("content", "")
+            if isinstance(content, str):
+                total += len(content) // 4 + 4
+            elif isinstance(content, list):
+                total += sum(len(str(b)) // 4 + 4 for b in content)
+        return total
+
+    def should_compact(self, messages: list[dict]) -> bool:
+        non_system = [m for m in messages if m.get("role") != "system"]
+        if len(non_system) < self._cfg.compaction_min_turns * 2:
+            return False
+        return self.estimate_tokens(messages) > self._cfg.compaction_max_tokens
+
+    def compact(self, messages: list[dict]) -> list[dict]:
+        """Summarize old messages; keep system msgs + recent 4 turns + summary."""
+        system_msgs = [m for m in messages if m.get("role") == "system"]
+        non_system = [m for m in messages if m.get("role") != "system"]
+
+        keep_n = 8  # keep last 4 user/assistant pairs
+        old_msgs = non_system[:-keep_n] if len(non_system) > keep_n else []
+        recent_msgs = non_system[-keep_n:] if len(non_system) >= keep_n else non_system
+
+        if not old_msgs:
+            return messages
+
+        conv_text = "\n".join(
+            f"{m['role'].upper()}: {(m['content'] if isinstance(m.get('content'), str) else str(m.get('content', '')))[:400]}"
+            for m in old_msgs
+        )
+        summary_prompt = (
+            "Summarize the following conversation history into a concise context block "
+            "(max 400 words). Preserve: key decisions made, code written or changed, "
+            "errors encountered, and the current goal.\n\n" + conv_text
+        )
+        try:
+            body = json.dumps({
+                "model": self._model,
+                "messages": [{"role": "user", "content": summary_prompt}],
+                "stream": False,
+                "options": {"temperature": 0.1, "num_ctx": 4096},
+            }).encode()
+            req_obj = urllib.request.Request(
+                f"{self._ollama_host}/v1/chat/completions",
+                data=body,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req_obj, timeout=60) as resp:
+                data = json.loads(resp.read())
+            summary = data["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            log.warning("COMPACTION: summarization failed: %s — skipping", e)
+            return messages
+
+        compacted = system_msgs + [
+            {"role": "user", "content": f"[Prior Conversation Summary]\n{summary}"},
+            {"role": "assistant", "content": "Understood. I have context from our earlier conversation."},
+        ] + recent_msgs
+
+        log.info(
+            "COMPACTION: %d→%d messages (est. tokens %d→%d)",
+            len(messages), len(compacted),
+            self.estimate_tokens(messages),
+            self.estimate_tokens(compacted),
+        )
+        return compacted
+
+
+# ---------------------------------------------------------------------------
 # LocalModelOptimizer — CoT, retry, self-consistency
 # ---------------------------------------------------------------------------
 class LocalModelOptimizer:
@@ -1269,6 +1354,7 @@ def make_handler_class(
     verifier: VerificationAgent,
     team_mem: TeamMemory,
     optimizer: LocalModelOptimizer,
+    compactor: "ConversationCompactor",
 ) -> type:
 
     class BridgeHandler(BaseHTTPRequestHandler):
@@ -1373,6 +1459,14 @@ def make_handler_class(
             if system_text:
                 req = dict(req)
                 req["system"] = system_text
+
+            # --- COMPACTION: summarize old turns if context is too long ---
+            if config.enable_compaction:
+                msgs_raw = req.get("messages", [])
+                if compactor.should_compact(msgs_raw):
+                    log.info("COMPACTION: context too long, compacting...")
+                    req = dict(req)
+                    req["messages"] = compactor.compact(msgs_raw)
 
             # --- COORDINATOR_MODE: decompose multi-part tasks ---
             if config.enable_coordinator and coordinator.is_multi_task(user_text):
@@ -1512,6 +1606,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-ultraplan", action="store_true", help="Disable ULTRAPLAN")
     p.add_argument("--enable-verification", action="store_true", help="Enable VERIFICATION_AGENT")
     p.add_argument("--no-teammem", action="store_true", help="Disable persistent team memory")
+    p.add_argument("--no-compaction", action="store_true", help="Disable context compaction")
+    p.add_argument("--compaction-max-tokens", type=int, default=24000,
+                   help="Token threshold to trigger compaction (default: 24000)")
 
     p.add_argument("--rag-index", default=".bridge_rag_index.json", help="RAG index file path")
     p.add_argument("--rag-dirs", nargs="*", default=["."], help="Directories to index for RAG")
@@ -1551,6 +1648,8 @@ def main():
         enable_ultraplan=not args.no_ultraplan,
         enable_verification=args.enable_verification,
         enable_teammem=not args.no_teammem,
+        enable_compaction=not args.no_compaction,
+        compaction_max_tokens=args.compaction_max_tokens,
         enable_thinking=not args.no_thinking,
         thinking_budget_tokens=args.thinking_budget,
         rag_index_path=args.rag_index,
@@ -1593,10 +1692,11 @@ def main():
     uplan = UltraPlan(cfg, cfg.ollama_host, cfg.primary_model)
     verif = VerificationAgent(cfg, cfg.ollama_host)
     optim = LocalModelOptimizer()
+    compactor = ConversationCompactor(cfg, cfg.ollama_host, cfg.primary_model)
 
     handler_class = make_handler_class(
         cfg, cache_layer, mcp, rag, kairos_daemon,
-        coord, clf, uplan, verif, team_mem, optim,
+        coord, clf, uplan, verif, team_mem, optim, compactor,
     )
 
     server = HTTPServer((cfg.proxy_host, cfg.proxy_port), handler_class)
