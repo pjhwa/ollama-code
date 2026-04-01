@@ -1351,13 +1351,28 @@ def non_streaming_response(
         cache_creation, cache_read = cache_layer.record(system_text, len(system_text) // 4)
 
     body = json.dumps({**openai_req, "stream": False}).encode()
+    ollama_url = f"{ollama_host}/v1/chat/completions"
+    log.info(
+        "OLLAMA→ model=%s msgs=%d max_tokens=%s",
+        openai_req.get("model"), len(openai_req.get("messages", [])),
+        openai_req.get("max_tokens", openai_req.get("options", {}).get("num_predict", "?")),
+    )
     req_obj = urllib.request.Request(
-        f"{ollama_host}/v1/chat/completions",
+        ollama_url,
         data=body,
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req_obj, timeout=300) as resp:
-        data = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req_obj, timeout=300) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode(errors="replace")
+        log.error("OLLAMA HTTP %d url=%s body=%s", e.code, ollama_url, err_body[:400])
+        raise
+    except urllib.error.URLError as e:
+        log.error("OLLAMA connection failed url=%s reason=%s", ollama_url, e.reason)
+        raise
+    log.info("OLLAMA← finish=%s", data.get("choices", [{}])[0].get("finish_reason", "?"))
 
     choice = data.get("choices", [{}])[0]
     msg = choice.get("message", {})
@@ -1427,6 +1442,10 @@ def make_handler_class(
 
         def _send_json(self, code: int, obj: dict):
             body = json.dumps(obj, ensure_ascii=False).encode()
+            if code >= 400:
+                log.warning("RESPONSE %d path=%s body=%s", code, self.path, body[:300])
+            else:
+                log.debug("RESPONSE %d path=%s bytes=%d", code, self.path, len(body))
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -1434,6 +1453,7 @@ def make_handler_class(
             self.wfile.write(body)
 
         def _send_error(self, code: int, msg: str):
+            log.error("ERROR %d path=%s msg=%s", code, self.path, msg)
             self._send_json(code, {"error": {"type": "bridge_error", "message": msg}})
 
         def do_GET(self):
@@ -1502,6 +1522,43 @@ def make_handler_class(
 
             orig_model = req.get("model", config.primary_model)
             is_streaming = req.get("stream", False)
+            _max_tokens = req.get("max_tokens", 0)
+            _query_source = req.get("querySource", "")
+            _msg_count = len(req.get("messages", []))
+
+            log.info(
+                "REQUEST model=%s stream=%s max_tokens=%s querySource=%r msgs=%d",
+                orig_model, is_streaming, _max_tokens, _query_source, _msg_count,
+            )
+
+            # ── Model-validation fast-path ───────────────────────────────────
+            # Claude Code CLI's validateModel() sends max_tokens=1 with
+            # querySource='model_validation' (or similar tiny requests).
+            # Skip heavy features (thinking, RAG, KAIROS, etc.) and return a
+            # minimal valid response so startup validation is fast and reliable.
+            _is_validation = (
+                _query_source == "model_validation"
+                or (_max_tokens and _max_tokens <= 3)
+            )
+            if _is_validation:
+                log.info("VALIDATION fast-path: returning stub response (max_tokens=%s)", _max_tokens)
+                stub = {
+                    "id": f"msg_{uuid.uuid4().hex[:16]}",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": orig_model,
+                    "content": [{"type": "text", "text": "ok"}],
+                    "stop_reason": "end_turn",
+                    "stop_sequence": None,
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 1,
+                        "cache_creation_input_tokens": 0,
+                        "cache_read_input_tokens": 0,
+                    },
+                }
+                self._send_json(200, stub)
+                return
 
             # Extract system text
             system_raw = req.get("system", "")

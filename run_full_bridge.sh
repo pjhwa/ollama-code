@@ -12,6 +12,8 @@ EMBED_MODEL="${EMBED_MODEL:-nomic-embed-text}"
 PROXY_PORT="${PROXY_PORT:-9099}"
 RAG_DIRS="${RAG_DIRS:-.}"
 INDEX_ON_START="${INDEX_ON_START:-false}"   # set to "true" to re-index on each start
+BRIDGE_LOG="${BRIDGE_LOG:-/tmp/bridge.log}"   # log file path
+BRIDGE_VERBOSE="${BRIDGE_VERBOSE:-false}"     # set to "true" for debug-level logging
 
 # ---------------------------------------------------------------------------
 # Colors
@@ -201,10 +203,20 @@ echo "Model: $PRIMARY_MODEL"
 echo "  RAM guide: qwen3:4b (8GB) | qwen3:8b (16GB) | qwen3:14b (32GB) | qwen3:32b (64GB+)"
 echo ""
 echo "Press Ctrl+C to stop."
+echo "Logs: $BRIDGE_LOG  (tail -f $BRIDGE_LOG)"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Start bridge
+# Build verbose flag
+# ---------------------------------------------------------------------------
+VERBOSE_FLAG=""
+if [[ "$BRIDGE_VERBOSE" == "true" ]]; then
+    VERBOSE_FLAG="--verbose"
+    info "Debug logging enabled (BRIDGE_VERBOSE=true)"
+fi
+
+# ---------------------------------------------------------------------------
+# Start bridge — stdout+stderr → log file AND console
 # ---------------------------------------------------------------------------
 exec python3 "$BRIDGE_SCRIPT" \
     --host 0.0.0.0 \
@@ -215,4 +227,5 @@ exec python3 "$BRIDGE_SCRIPT" \
     --rag-dirs $RAG_DIRS \
     --rag-index ".bridge_rag_index.json" \
     --kairos-interval 30 \
-    "$@"
+    $VERBOSE_FLAG \
+    "$@" 2>&1 | tee "$BRIDGE_LOG"
