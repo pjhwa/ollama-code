@@ -7,7 +7,7 @@ set -euo pipefail
 # Configuration — edit these or override via environment variables
 # ---------------------------------------------------------------------------
 OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
-PRIMARY_MODEL="${PRIMARY_MODEL:-qwen2.5-coder:14b}"
+PRIMARY_MODEL="${PRIMARY_MODEL:-qwen3:8b}"
 EMBED_MODEL="${EMBED_MODEL:-nomic-embed-text}"
 PROXY_PORT="${PROXY_PORT:-9099}"
 RAG_DIRS="${RAG_DIRS:-.}"
@@ -89,6 +89,13 @@ curl -sf "$OLLAMA_HOST/api/generate" \
     -d "{\"model\":\"$PRIMARY_MODEL\",\"prompt\":\"hi\",\"stream\":false,\"options\":{\"num_predict\":1,\"keep_alive\":-1}}" \
     >/dev/null 2>&1 || warn "Warm-up ping failed (non-fatal)"
 
+# Inform about thinking mode
+if echo "$PRIMARY_MODEL" | grep -qiE "qwen3|deepseek-r1|qwq"; then
+    info "Thinking mode: ENABLED (model supports native reasoning)"
+else
+    info "Thinking mode: not active (add qwen3/deepseek-r1 model to enable)"
+fi
+
 # ---------------------------------------------------------------------------
 # RAG index
 # ---------------------------------------------------------------------------
@@ -138,14 +145,20 @@ echo -e "${GREEN}│  Model: $PRIMARY_MODEL                   │${NC}"
 echo -e "${GREEN}└─────────────────────────────────────────────┘${NC}"
 echo ""
 echo "Features enabled:"
-echo "  ✓ Prompt cache simulation"
+echo "  ✓ Prompt cache simulation (static/dynamic boundary)"
 echo "  ✓ Vector RAG (nomic-embed-text)"
 echo "  ✓ KAIROS background watcher"
 echo "  ✓ COORDINATOR_MODE (task decomposition)"
 echo "  ✓ TRANSCRIPT_CLASSIFIER (safety scoring)"
 echo "  ✓ ULTRAPLAN (complexity detection)"
 echo "  ✓ TEAMMEM (persistent memory)"
+echo "  ✓ Context Compaction (auto-summarize long sessions)"
+echo "  ✓ Qwen3 Thinking Mode (native reasoning via options)"
+echo "  ✓ Parallel MCP Tool Execution (agentic loop)"
 echo "  ○ VERIFICATION_AGENT (disabled by default, add --enable-verification)"
+echo ""
+echo "Model: $PRIMARY_MODEL"
+echo "  RAM guide: qwen3:4b (8GB) | qwen3:8b (16GB) | qwen3:14b (32GB) | qwen3:32b (64GB+)"
 echo ""
 echo "Press Ctrl+C to stop."
 echo ""

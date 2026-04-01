@@ -6,9 +6,11 @@ Drop-in replacement for the Anthropic API endpoint. Set:
     export ANTHROPIC_BASE_URL=http://localhost:9099
     export ANTHROPIC_API_KEY=local
 
+Default model: qwen3:8b (supports native thinking/reasoning mode)
+
 Features:
-  - Prompt caching simulation (SHA256 + keep_alive=-1)
-  - MCP server integration (stdio JSON-RPC 2.0)
+  - Prompt caching simulation (static/dynamic boundary marker, SHA256 + keep_alive=-1)
+  - MCP server integration (stdio JSON-RPC 2.0, parallel tool execution with agentic loop)
   - Vector RAG via nomic-embed-text (pure-Python, no numpy)
   - KAIROS daemon (background file watcher, PROACTIVE tick)
   - COORDINATOR_MODE (sequential task decomposition)
@@ -16,7 +18,8 @@ Features:
   - ULTRAPLAN (complexity detection → planning phase injection)
   - VERIFICATION_AGENT (secondary model verification)
   - TEAMMEM (persistent session memory across requests)
-  - LocalModelOptimizer (CoT forcing, retry, self-consistency)
+  - LocalModelOptimizer (CoT forcing, Qwen3 thinking mode, retry)
+  - ConversationCompactor (summarize old turns, keep context within limits)
 """
 
 from __future__ import annotations
