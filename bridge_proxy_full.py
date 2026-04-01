@@ -527,7 +527,8 @@ class RagContextInjector:
 
     def query(self, text: str, top_k: Optional[int] = None) -> list[_RagChunk]:
         k = top_k or self._cfg.rag_top_k
-        emb = self._embed(text)
+        # nomic-embed-text has a 512-token (≈2048 char) context limit; truncate query
+        emb = self._embed(text[:1500])
         if not emb:
             return []
         with self._lock:
@@ -698,17 +699,19 @@ class UltraPlan:
 
     def generate_plan(self, user_text: str) -> str:
         """Call Ollama to produce a step-by-step plan."""
+        # /no_think prefix disables Qwen3 thinking mode reliably on both native
+        # and OpenAI-compat endpoints (options.think:False may not propagate on all versions)
         plan_prompt = (
+            "/no_think\n"
             "You are a software architect. Analyze the following request and produce "
             "a concise numbered implementation plan (5-10 steps). Output ONLY the plan, "
-            "no preamble.\n\nRequest:\n" + user_text
+            "no preamble.\n\nRequest:\n" + user_text[:800]
         )
         try:
             body = json.dumps({
                 "model": self._model,
                 "messages": [{"role": "user", "content": plan_prompt}],
                 "stream": False,
-                # think:false — disable Qwen3 thinking mode for fast meta-calls
                 "options": {"temperature": 0.2, "num_ctx": 4096, "num_predict": 512, "think": False},
             }).encode()
             req = urllib.request.Request(
@@ -748,10 +751,11 @@ class CoordinatorMode:
 
     def decompose(self, user_text: str) -> list[str]:
         decomp_prompt = (
+            "/no_think\n"
             "Break the following request into independent subtasks. "
             "Output a JSON array of strings, each being a clear subtask. "
             f"Maximum {self._cfg.coordinator_max_subtasks} subtasks. "
-            "Output ONLY the JSON array.\n\nRequest:\n" + user_text
+            "Output ONLY the JSON array.\n\nRequest:\n" + user_text[:600]
         )
         try:
             body = json.dumps({
@@ -891,6 +895,7 @@ class ConversationCompactor:
             for m in old_msgs
         )
         summary_prompt = (
+            "/no_think\n"
             "Summarize the following conversation history into a concise context block "
             "(max 400 words). Preserve: key decisions made, code written or changed, "
             "errors encountered, and the current goal.\n\n" + conv_text
@@ -1000,10 +1005,16 @@ class LocalModelOptimizer:
 
     @staticmethod
     def extract_user_text(messages: list[dict]) -> str:
+        """Extract plain text from the last user message (no JSON serialization)."""
         for msg in reversed(messages):
             if msg.get("role") == "user":
                 c = msg.get("content", "")
-                return c if isinstance(c, str) else json.dumps(c)
+                if isinstance(c, str):
+                    return c
+                if isinstance(c, list):
+                    # content block array — extract text parts only
+                    parts = [b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text"]
+                    return " ".join(p for p in parts if p)
         return ""
 
 
