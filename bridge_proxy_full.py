@@ -727,13 +727,15 @@ class UltraPlan:
         self._model = model
 
     def is_complex(self, text: str) -> bool:
+        # Claude Code prepends hook-injected context (can be 10K+ chars) to the
+        # first user message. Only the tail (actual user input) should be checked.
+        tail = text[-500:] if len(text) > 500 else text
         result = (
-            len(text) >= self._cfg.ultraplan_min_length
-            and bool(_COMPLEX_PATTERN.search(text))
+            len(tail) >= self._cfg.ultraplan_min_length
+            and bool(_COMPLEX_PATTERN.search(tail))
         )
-        log.debug("ULTRAPLAN.is_complex: len=%d threshold=%d match=%s → %s",
-                  len(text), self._cfg.ultraplan_min_length,
-                  bool(_COMPLEX_PATTERN.search(text)), result)
+        log.info("ULTRAPLAN.is_complex: text_len=%d tail_len=%d threshold=%d → %s",
+                 len(text), len(tail), self._cfg.ultraplan_min_length, result)
         return result
 
     def generate_plan(self, user_text: str) -> str:
@@ -773,8 +775,10 @@ class CoordinatorMode:
         self._model = model
 
     def is_multi_task(self, text: str) -> bool:
-        hits = len(_MULTI_TASK_PATTERN.findall(text))
-        return hits >= 2 and len(text) > 200
+        # Use only the tail to avoid false-positives from hook-injected context
+        tail = text[-500:] if len(text) > 500 else text
+        hits = len(_MULTI_TASK_PATTERN.findall(tail))
+        return hits >= 2 and len(tail) > 200
 
     def decompose(self, user_text: str) -> list[str]:
         decomp_prompt = (
