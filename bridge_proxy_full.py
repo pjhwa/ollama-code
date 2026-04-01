@@ -685,6 +685,41 @@ _COMPLEX_KEYWORDS = [
 _COMPLEX_PATTERN = re.compile("|".join(_COMPLEX_KEYWORDS), re.I)
 
 
+def _ollama_chat_fast(
+    ollama_host: str,
+    model: str,
+    messages: list[dict],
+    num_predict: int = 512,
+    temperature: float = 0.2,
+    timeout: int = 90,
+) -> str:
+    """Call Ollama native /api/chat with think:false for fast meta-calls.
+
+    Uses /api/chat (not /v1/chat/completions) so that think:false is
+    reliably honoured — the OpenAI-compat layer does not always forward
+    the think option to qwen3/deepseek models.
+    """
+    body = json.dumps({
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "think": False,                         # top-level flag for native API
+        "options": {
+            "temperature": temperature,
+            "num_predict": num_predict,
+            "think": False,                     # belt-and-suspenders
+        },
+    }).encode()
+    req = urllib.request.Request(
+        f"{ollama_host}/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read())
+    return data.get("message", {}).get("content", "")
+
+
 class UltraPlan:
     def __init__(self, config: ProxyConfig, ollama_host: str, model: str):
         self._cfg = config
@@ -692,36 +727,28 @@ class UltraPlan:
         self._model = model
 
     def is_complex(self, text: str) -> bool:
-        return (
+        result = (
             len(text) >= self._cfg.ultraplan_min_length
             and bool(_COMPLEX_PATTERN.search(text))
         )
+        log.debug("ULTRAPLAN.is_complex: len=%d threshold=%d match=%s → %s",
+                  len(text), self._cfg.ultraplan_min_length,
+                  bool(_COMPLEX_PATTERN.search(text)), result)
+        return result
 
     def generate_plan(self, user_text: str) -> str:
-        """Call Ollama to produce a step-by-step plan."""
-        # /no_think prefix disables Qwen3 thinking mode reliably on both native
-        # and OpenAI-compat endpoints (options.think:False may not propagate on all versions)
+        """Call Ollama to produce a step-by-step plan (no thinking mode)."""
         plan_prompt = (
-            "/no_think\n"
             "You are a software architect. Analyze the following request and produce "
             "a concise numbered implementation plan (5-10 steps). Output ONLY the plan, "
             "no preamble.\n\nRequest:\n" + user_text[:800]
         )
         try:
-            body = json.dumps({
-                "model": self._model,
-                "messages": [{"role": "user", "content": plan_prompt}],
-                "stream": False,
-                "options": {"temperature": 0.2, "num_ctx": 4096, "num_predict": 512, "think": False},
-            }).encode()
-            req = urllib.request.Request(
-                f"{self._ollama_host}/v1/chat/completions",
-                data=body,
-                headers={"Content-Type": "application/json"},
+            return _ollama_chat_fast(
+                self._ollama_host, self._model,
+                [{"role": "user", "content": plan_prompt}],
+                num_predict=512, temperature=0.2, timeout=90,
             )
-            with urllib.request.urlopen(req, timeout=90) as resp:
-                data = json.loads(resp.read())
-            return data["choices"][0]["message"]["content"]
         except Exception as e:
             log.warning("ULTRAPLAN: plan generation failed: %s", e)
             return ""
@@ -751,28 +778,17 @@ class CoordinatorMode:
 
     def decompose(self, user_text: str) -> list[str]:
         decomp_prompt = (
-            "/no_think\n"
             "Break the following request into independent subtasks. "
             "Output a JSON array of strings, each being a clear subtask. "
             f"Maximum {self._cfg.coordinator_max_subtasks} subtasks. "
             "Output ONLY the JSON array.\n\nRequest:\n" + user_text[:600]
         )
         try:
-            body = json.dumps({
-                "model": self._model,
-                "messages": [{"role": "user", "content": decomp_prompt}],
-                "stream": False,
-                # think:false — disable Qwen3 thinking mode for fast meta-calls
-                "options": {"temperature": 0.1, "num_ctx": 2048, "num_predict": 256, "think": False},
-            }).encode()
-            req = urllib.request.Request(
-                f"{self._ollama_host}/v1/chat/completions",
-                data=body,
-                headers={"Content-Type": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = json.loads(resp.read())
-            content = data["choices"][0]["message"]["content"].strip()
+            content = _ollama_chat_fast(
+                self._ollama_host, self._model,
+                [{"role": "user", "content": decomp_prompt}],
+                num_predict=256, temperature=0.1, timeout=60,
+            ).strip()
             # Extract JSON array
             m = re.search(r"\[.*\]", content, re.S)
             if m:
@@ -789,23 +805,14 @@ class CoordinatorMode:
             context = f"\n\nPrevious results:\n{accumulated}" if accumulated else ""
             prompt = f"Subtask {i+1}/{len(subtasks)}: {task}{context}"
             try:
-                body = json.dumps({
-                    "model": self._model,
-                    "messages": [
+                result = _ollama_chat_fast(
+                    self._ollama_host, self._model,
+                    [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt},
                     ],
-                    "stream": False,
-                    "options": {"temperature": 0.3, "num_ctx": 8192},
-                }).encode()
-                req = urllib.request.Request(
-                    f"{self._ollama_host}/v1/chat/completions",
-                    data=body,
-                    headers={"Content-Type": "application/json"},
+                    num_predict=1024, temperature=0.3, timeout=120,
                 )
-                with urllib.request.urlopen(req, timeout=120) as resp:
-                    data = json.loads(resp.read())
-                result = data["choices"][0]["message"]["content"]
                 results.append(f"### Subtask {i+1}: {task}\n{result}")
                 accumulated += f"\nSubtask {i+1} result: {result[:500]}"
                 log.info("COORDINATOR: subtask %d/%d completed", i + 1, len(subtasks))
@@ -832,20 +839,11 @@ class VerificationAgent:
             f"REQUEST:\n{user_request[:500]}\n\nRESPONSE:\n{response_text[:1000]}"
         )
         try:
-            body = json.dumps({
-                "model": self._cfg.verify_model,
-                "messages": [{"role": "user", "content": verify_prompt}],
-                "stream": False,
-                "options": {"temperature": 0.1, "num_ctx": 4096, "num_predict": 100, "think": False},
-            }).encode()
-            req = urllib.request.Request(
-                f"{self._ollama_host}/v1/chat/completions",
-                data=body,
-                headers={"Content-Type": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = json.loads(resp.read())
-            verdict_text = data["choices"][0]["message"]["content"].strip()
+            verdict_text = _ollama_chat_fast(
+                self._ollama_host, self._cfg.verify_model,
+                [{"role": "user", "content": verify_prompt}],
+                num_predict=100, temperature=0.1, timeout=60,
+            ).strip()
             passed = verdict_text.upper().startswith("PASS")
             return passed, verdict_text
         except Exception as e:
@@ -895,26 +893,16 @@ class ConversationCompactor:
             for m in old_msgs
         )
         summary_prompt = (
-            "/no_think\n"
             "Summarize the following conversation history into a concise context block "
             "(max 400 words). Preserve: key decisions made, code written or changed, "
             "errors encountered, and the current goal.\n\n" + conv_text
         )
         try:
-            body = json.dumps({
-                "model": self._model,
-                "messages": [{"role": "user", "content": summary_prompt}],
-                "stream": False,
-                "options": {"temperature": 0.1, "num_ctx": 4096, "num_predict": 600, "think": False},
-            }).encode()
-            req_obj = urllib.request.Request(
-                f"{self._ollama_host}/v1/chat/completions",
-                data=body,
-                headers={"Content-Type": "application/json"},
-            )
-            with urllib.request.urlopen(req_obj, timeout=90) as resp:
-                data = json.loads(resp.read())
-            summary = data["choices"][0]["message"]["content"].strip()
+            summary = _ollama_chat_fast(
+                self._ollama_host, self._model,
+                [{"role": "user", "content": summary_prompt}],
+                num_predict=600, temperature=0.1, timeout=90,
+            ).strip()
         except Exception as e:
             log.warning("COMPACTION: summarization failed: %s — skipping", e)
             return messages
@@ -1635,7 +1623,7 @@ def make_handler_class(
 
             # --- ULTRAPLAN: inject plan for complex requests ---
             if config.enable_ultraplan and ultraplan.is_complex(user_text):
-                log.info("ULTRAPLAN: generating plan for complex request")
+                log.info("ULTRAPLAN: generating plan for complex request (user_text len=%d)", len(user_text))
                 plan = ultraplan.generate_plan(user_text)
                 if plan:
                     dynamic_parts.append(f"## ULTRAPLAN — Pre-computed Implementation Plan\n{plan}")
@@ -1830,10 +1818,18 @@ def make_handler_class(
                     if config.enable_teammem and resp_obj.get("stop_reason") == "end_turn":
                         _try_extract_memory(team_mem, user_text, resp_obj)
 
-                    self._send_json(200, resp_obj)
+                    try:
+                        self._send_json(200, resp_obj)
+                    except BrokenPipeError:
+                        log.warning("non-streaming: client disconnected before response (BrokenPipe)")
+                except BrokenPipeError:
+                    log.warning("non-streaming: client disconnected mid-processing (BrokenPipe)")
                 except Exception as e:
                     log.error("non-streaming error: %s", e)
-                    self._send_error(500, str(e))
+                    try:
+                        self._send_error(500, str(e))
+                    except BrokenPipeError:
+                        pass
 
     return BridgeHandler
 
