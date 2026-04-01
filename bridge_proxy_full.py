@@ -25,6 +25,7 @@ Features:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import logging
@@ -1113,7 +1114,7 @@ def convert_anthropic_to_openai(req: dict, model: str, config: Optional["ProxyCo
             **({"think": True, "num_predict": config.thinking_budget_tokens} if _use_thinking else {}),
         },
     }
-    if req.get("max_tokens"):
+    if req.get("max_tokens") and not _use_thinking:
         openai_req["max_tokens"] = req["max_tokens"]
     if tools_out:
         openai_req["tools"] = tools_out
@@ -1598,6 +1599,9 @@ def make_handler_class(
                         self.wfile.flush()
                 except BrokenPipeError:
                     pass
+                # NOTE: MCP tool execution loop runs only in the non-streaming path.
+                # Streaming clients receive tool_use SSE events and handle tool
+                # execution themselves (standard Anthropic protocol).
 
             else:
                 # Non-streaming path
@@ -1668,6 +1672,7 @@ def make_handler_class(
                                 None,
                                 _cache_key_text,
                                 approx_input,
+                                strip_think=(config.enable_thinking and is_thinking_model(config.primary_model, config.thinking_models)),
                             )
                             log.info("MCP TOOL LOOP: follow-up response received")
 
@@ -1693,6 +1698,7 @@ def make_handler_class(
                                     None,
                                     _cache_key_text,
                                     approx_input,
+                                    strip_think=(config.enable_thinking and is_thinking_model(config.primary_model, config.thinking_models)),
                                 )
 
                     # Auto-save interesting context to TEAMMEM
