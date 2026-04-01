@@ -2,12 +2,24 @@
 # env.sh — Source this file to configure Claude Code CLI for local Ollama bridge.
 #
 # Usage:
-#   source ./env.sh
-#   claude                          # uses qwen3:14b via bridge automatically
-#   claude --model qwen3:14b        # explicit (ANTHROPIC_CUSTOM_MODEL_OPTION bypasses validation)
+#   source ./env.sh          ← MUST use 'source' (or '. ./env.sh')
+#   claude --model qwen3:14b
 #
-# The bridge must already be running:
-#   ./run_full_bridge.sh &          # background, or in a separate terminal
+# WRONG:  ./env.sh && claude   ← subshell; vars don't reach current shell
+# RIGHT:  source ./env.sh      ← sets vars in current shell
+
+# Detect direct execution (not sourced) and warn
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    echo ""
+    echo "⚠️  ERROR: Run with 'source', not directly:"
+    echo ""
+    echo "   source ./env.sh"
+    echo "   claude --model qwen3:14b"
+    echo ""
+    echo "Running './env.sh' sets vars in a subshell that exits immediately."
+    echo "The calling shell (where 'claude' runs) never sees them."
+    exit 1
+fi
 
 PRIMARY_MODEL="${PRIMARY_MODEL:-qwen3:14b}"
 PROXY_PORT="${PROXY_PORT:-9099}"
