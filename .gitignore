@@ -1,0 +1,19 @@
+# Bridge runtime files
+.bridge_rag_index.json
+.bridge_memory.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+/tmp/
