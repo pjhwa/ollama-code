@@ -1508,8 +1508,10 @@ def make_handler_class(
                 self._send_error(404, "Not found")
 
         def do_POST(self):
-            if self.path != "/v1/messages":
-                self._send_error(404, "Only /v1/messages is supported")
+            # Strip query string before routing (e.g. /v1/messages?beta=true)
+            _post_path = self.path.split("?", 1)[0]
+            if _post_path != "/v1/messages":
+                self._send_error(404, f"Unknown path: {self.path}")
                 return
 
             length = int(self.headers.get("Content-Length", 0))
