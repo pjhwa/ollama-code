@@ -56,7 +56,7 @@ log = logging.getLogger("bridge")
 @dataclass
 class ProxyConfig:
     ollama_host: str = "http://localhost:11434"
-    primary_model: str = "qwen2.5-coder:14b"
+    primary_model: str = "qwen3:8b"
     embed_model: str = "nomic-embed-text"
     verify_model: str = ""          # defaults to primary_model if empty
     proxy_port: int = 9099
@@ -99,6 +99,13 @@ class ProxyConfig:
 
     # VERIFICATION
     verification_min_tokens: int = 200   # only verify if response this long
+
+    # Qwen3 / Thinking models
+    enable_thinking: bool = True
+    thinking_budget_tokens: int = 8192
+    thinking_models: list[str] = field(
+        default_factory=lambda: ["qwen3", "deepseek-r1", "qwq", "marco-o1"]
+    )
 
     # Retry / backoff
     max_retries: int = 2
@@ -158,6 +165,12 @@ class TeamMemory:
         for k, v in list(items.items())[-20:]:   # last 20 entries
             lines.append(f"- {k}: {json.dumps(v, ensure_ascii=False)}")
         return "\n".join(lines)
+
+
+def is_thinking_model(model_name: str, thinking_models: list[str]) -> bool:
+    """Return True if model supports native thinking/reasoning mode."""
+    lower = model_name.lower()
+    return any(tm.lower() in lower for tm in thinking_models)
 
 
 # ---------------------------------------------------------------------------
@@ -785,6 +798,24 @@ class LocalModelOptimizer:
         return msgs
 
     @staticmethod
+    def apply_thinking_mode(messages: list[dict]) -> list[dict]:
+        """Prepend /think to last user message to activate Qwen3 thinking."""
+        msgs = [dict(m) for m in messages]
+        for i in range(len(msgs) - 1, -1, -1):
+            if msgs[i]["role"] == "user":
+                content = msgs[i]["content"]
+                if isinstance(content, str) and not content.startswith("/think"):
+                    msgs[i]["content"] = "/think\n" + content
+                break
+        return msgs
+
+    @staticmethod
+    def strip_thinking_tags(text: str) -> str:
+        """Remove <think>...</think> blocks from model output before returning."""
+        cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+        return cleaned.strip()
+
+    @staticmethod
     def inject_error_context(messages: list[dict], error: str) -> list[dict]:
         msgs = list(messages)
         msgs.append({
@@ -821,7 +852,7 @@ def _extract_text(content: Any) -> str:
     return str(content)
 
 
-def convert_anthropic_to_openai(req: dict, model: str) -> dict:
+def convert_anthropic_to_openai(req: dict, model: str, config: Optional["ProxyConfig"] = None) -> dict:
     """Translate Anthropic Messages API request → OpenAI chat format."""
     messages: list[dict] = []
 
@@ -908,14 +939,20 @@ def convert_anthropic_to_openai(req: dict, model: str) -> dict:
             },
         })
 
+    _use_thinking = (
+        config is not None
+        and config.enable_thinking
+        and is_thinking_model(model, config.thinking_models)
+    )
     openai_req: dict = {
         "model": model,
         "messages": messages,
         "stream": req.get("stream", False),
         "options": {
-            "num_ctx": min(req.get("max_tokens", 4096) * 4, 32768),
+            "num_ctx": min(req.get("max_tokens", 4096) * 4, 65536 if _use_thinking else 32768),
             "temperature": req.get("temperature", 0.3),
             "keep_alive": -1,
+            **({"think": True, "num_predict": config.thinking_budget_tokens} if _use_thinking else {}),
         },
     }
     if req.get("max_tokens"):
@@ -980,6 +1017,8 @@ def stream_openai_to_anthropic(
     output_tokens = 0
     stop_reason = "end_turn"
     tool_call_accumulator: dict[int, dict] = {}
+    _think_buffer = ""
+    _in_think_block = False
 
     # Retry with backoff
     cfg_retries = 2
@@ -1013,15 +1052,26 @@ def stream_openai_to_anthropic(
                     elif finish in ("stop", "length"):
                         stop_reason = "end_turn" if finish == "stop" else "max_tokens"
 
-                    # Text delta
+                    # Text delta — buffer to strip <think> tags for thinking models
                     text = delta.get("content") or ""
                     if text:
-                        output_tokens += len(text) // 4 + 1
-                        yield _sse("content_block_delta", {
-                            "type": "content_block_delta",
-                            "index": 0,
-                            "delta": {"type": "text_delta", "text": text},
-                        })
+                        if "<think>" in text or "</think>" in text or _in_think_block:
+                            _think_buffer += text
+                            cleaned = re.sub(r"<think>.*?</think>", "", _think_buffer, flags=re.DOTALL)
+                            if cleaned != _think_buffer and not re.search(r"<think>(?!.*</think>)", cleaned, re.DOTALL):
+                                text = cleaned
+                                _think_buffer = ""
+                                _in_think_block = False
+                            else:
+                                _in_think_block = "<think>" in _think_buffer and "</think>" not in _think_buffer
+                                continue
+                        if text:
+                            output_tokens += len(text) // 4 + 1
+                            yield _sse("content_block_delta", {
+                                "type": "content_block_delta",
+                                "index": 0,
+                                "delta": {"type": "text_delta", "text": text},
+                            })
 
                     # Tool call deltas
                     for tc in delta.get("tool_calls", []):
@@ -1129,6 +1179,8 @@ def non_streaming_response(
 
     content_blocks: list[dict] = []
     text = msg.get("content") or ""
+    if text:
+        text = LocalModelOptimizer.strip_thinking_tags(text)
     if text:
         content_blocks.append({"type": "text", "text": text})
 
@@ -1309,7 +1361,12 @@ def make_handler_class(
                     return
 
             # Convert to OpenAI format
-            openai_req = convert_anthropic_to_openai(req, config.primary_model)
+            openai_req = convert_anthropic_to_openai(req, config.primary_model, config)
+            # Qwen3 thinking mode: activate via /think prefix
+            if (config.enable_thinking
+                    and is_thinking_model(config.primary_model, config.thinking_models)):
+                openai_req["messages"] = optimizer.apply_thinking_mode(openai_req["messages"])
+                log.debug("THINKING: activated for model %s", config.primary_model)
 
             # Streaming path
             if is_streaming:
@@ -1403,7 +1460,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     p.add_argument("--port", type=int, default=9099, help="Bind port (default: 9099)")
     p.add_argument("--ollama", default="http://localhost:11434", help="Ollama base URL")
-    p.add_argument("--model", default="qwen2.5-coder:14b", help="Primary Ollama model")
+    p.add_argument("--model", default="qwen3:8b", help="Primary Ollama model")
     p.add_argument("--embed-model", default="nomic-embed-text", help="Embedding model")
     p.add_argument("--verify-model", default="", help="Verification model (default: same as primary)")
 
@@ -1428,6 +1485,8 @@ def parse_args() -> argparse.Namespace:
                    help="MCP server command (can repeat). First arg is server name, rest is command.")
     p.add_argument("--index-now", action="store_true", help="Index RAG directories on startup")
     p.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
+    p.add_argument("--no-thinking", action="store_true", help="Disable thinking mode for Qwen3/DeepSeek-R1")
+    p.add_argument("--thinking-budget", type=int, default=8192, help="Max thinking tokens (default: 8192)")
     return p.parse_args()
 
 
@@ -1453,6 +1512,8 @@ def main():
         enable_ultraplan=not args.no_ultraplan,
         enable_verification=args.enable_verification,
         enable_teammem=not args.no_teammem,
+        enable_thinking=not args.no_thinking,
+        thinking_budget_tokens=args.thinking_budget,
         rag_index_path=args.rag_index,
         rag_watch_dirs=args.rag_dirs or ["."],
         rag_top_k=args.rag_top_k,
