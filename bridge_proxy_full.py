@@ -1440,10 +1440,50 @@ def make_handler_class(
             if self.path == "/health":
                 self._send_json(200, {"status": "ok", "bridge": "bridge_proxy_full"})
             elif self.path.startswith("/v1/models"):
-                self._send_json(200, {
-                    "object": "list",
-                    "data": [{"id": config.primary_model, "object": "model"}],
-                })
+                # Anthropic API format — Claude CLI validates model IDs against this list.
+                # We advertise the standard Claude model aliases so the CLI passes validation,
+                # then map every model to config.primary_model in do_POST.
+                _MODEL_ALIASES = [
+                    ("claude-opus-4-6-20250514",   "Claude Opus 4.6"),
+                    ("claude-opus-4-6",            "Claude Opus 4.6"),
+                    ("claude-sonnet-4-6-20250514", "Claude Sonnet 4.6"),
+                    ("claude-sonnet-4-6",          "Claude Sonnet 4.6"),
+                    ("claude-haiku-4-5-20251001",  "Claude Haiku 4.5"),
+                    ("claude-haiku-4-5",           "Claude Haiku 4.5"),
+                    # Also expose the real local model so explicit --model works
+                    (config.primary_model,         config.primary_model),
+                ]
+                model_list = [
+                    {
+                        "type": "model",
+                        "id": mid,
+                        "display_name": dname,
+                        "created_at": "2025-01-01T00:00:00Z",
+                    }
+                    for mid, dname in _MODEL_ALIASES
+                ]
+                # Handle /v1/models/{model_id} — return single model object
+                path_parts = self.path.rstrip("/").split("/")
+                if len(path_parts) >= 4 and path_parts[3]:
+                    model_id = path_parts[3]
+                    match = next((m for m in model_list if m["id"] == model_id), None)
+                    if match:
+                        self._send_json(200, match)
+                    else:
+                        # Return primary model info for any unknown Claude-like model ID
+                        self._send_json(200, {
+                            "type": "model",
+                            "id": model_id,
+                            "display_name": model_id,
+                            "created_at": "2025-01-01T00:00:00Z",
+                        })
+                else:
+                    self._send_json(200, {
+                        "data": model_list,
+                        "has_more": False,
+                        "first_id": model_list[0]["id"],
+                        "last_id": model_list[-1]["id"],
+                    })
             else:
                 self._send_error(404, "Not found")
 
