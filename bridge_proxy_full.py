@@ -71,6 +71,7 @@ class ProxyConfig:
     enable_classifier: bool = True
     enable_ultraplan: bool = True
     enable_verification: bool = False   # extra latency; off by default
+    enable_tool_loop: bool = True      # execute MCP tool calls in agentic loop
     enable_teammem: bool = True
 
     # RAG
@@ -222,8 +223,10 @@ class McpServerManager:
     def __init__(self):
         self._servers: dict[str, subprocess.Popen] = {}
         self._tool_registry: dict[str, dict] = {}   # tool_name → {server, schema}
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()               # protects registry
+        self._server_locks: dict[str, threading.Lock] = {}   # per-server send lock
         self._req_id = 0
+        self._req_id_lock = threading.Lock()
 
     def add_server(self, name: str, cmd: list[str], env: Optional[dict] = None):
         try:
@@ -235,6 +238,7 @@ class McpServerManager:
                 env={**os.environ, **(env or {})},
             )
             self._servers[name] = proc
+            self._server_locks[name] = threading.Lock()
             self._initialize(name)
             self._list_tools(name)
             log.info("MCP: started server '%s' (pid=%d)", name, proc.pid)
@@ -242,26 +246,29 @@ class McpServerManager:
             log.error("MCP: failed to start '%s': %s", name, e)
 
     def _next_id(self) -> int:
-        self._req_id += 1
-        return self._req_id
+        with self._req_id_lock:
+            self._req_id += 1
+            return self._req_id
 
     def _send(self, name: str, method: str, params: Any = None) -> Any:
         proc = self._servers.get(name)
         if proc is None or proc.poll() is not None:
             raise RuntimeError(f"MCP server '{name}' not running")
-        msg = {"jsonrpc": "2.0", "id": self._next_id(), "method": method}
-        if params is not None:
-            msg["params"] = params
-        line = json.dumps(msg) + "\n"
-        proc.stdin.write(line.encode())
-        proc.stdin.flush()
-        raw = proc.stdout.readline()
-        if not raw:
-            raise RuntimeError(f"MCP server '{name}' closed stdout")
-        resp = json.loads(raw.decode())
-        if "error" in resp:
-            raise RuntimeError(f"MCP error: {resp['error']}")
-        return resp.get("result")
+        server_lock = self._server_locks.get(name, self._lock)
+        with server_lock:
+            msg = {"jsonrpc": "2.0", "id": self._next_id(), "method": method}
+            if params is not None:
+                msg["params"] = params
+            line = json.dumps(msg) + "\n"
+            proc.stdin.write(line.encode())
+            proc.stdin.flush()
+            raw = proc.stdout.readline()
+            if not raw:
+                raise RuntimeError(f"MCP server '{name}' closed stdout")
+            resp = json.loads(raw.decode())
+            if "error" in resp:
+                raise RuntimeError(f"MCP error: {resp['error']}")
+            return resp.get("result")
 
     def _initialize(self, name: str):
         self._send(name, "initialize", {
@@ -312,6 +319,39 @@ class McpServerManager:
             return str(result)
         except Exception as e:
             return f"[MCP] Error calling {tool_name}: {e}"
+
+    def call_tools_parallel(
+        self, tool_calls: list[tuple[str, dict]]
+    ) -> list[tuple[str, str]]:
+        """Execute multiple MCP tool calls concurrently using ThreadPoolExecutor.
+
+        Args:
+            tool_calls: list of (tool_name, arguments) pairs
+
+        Returns:
+            list of (tool_name, result_text) pairs in the same order as input
+        """
+        import concurrent.futures
+
+        n = len(tool_calls)
+        results: list[tuple[str, str]] = [("", "")] * n
+
+        def _call(idx: int, tool_name: str, arguments: dict) -> None:
+            results[idx] = (tool_name, self.call_tool(tool_name, arguments))
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(n, 8), thread_name_prefix="mcp-tool"
+        ) as executor:
+            futures = [
+                executor.submit(_call, i, name, args)
+                for i, (name, args) in enumerate(tool_calls)
+            ]
+            for f in concurrent.futures.as_completed(futures):
+                exc = f.exception()
+                if exc:
+                    log.warning("MCP parallel call error: %s", exc)
+
+        return results
 
     def shutdown(self):
         for name, proc in self._servers.items():
@@ -1569,6 +1609,65 @@ def make_handler_class(
                         strip_think=(config.enable_thinking and is_thinking_model(config.primary_model, config.thinking_models)),
                     )
 
+                    # --- PARALLEL MCP TOOL EXECUTION LOOP ---
+                    # When model returns MCP tool_use blocks, execute them in parallel
+                    # and feed results back for a follow-up final answer (1 round).
+                    if config.enable_mcp and config.enable_tool_loop:
+                        _mcp_calls = [
+                            (block["name"], block.get("input", {}), block.get("id", ""))
+                            for block in resp_obj.get("content", [])
+                            if block.get("type") == "tool_use"
+                            and block.get("name", "").startswith("mcp__")
+                        ]
+                        if _mcp_calls:
+                            log.info(
+                                "MCP TOOL LOOP: executing %d tool(s) in parallel: %s",
+                                len(_mcp_calls),
+                                [t[0] for t in _mcp_calls],
+                            )
+                            parallel_results = mcp.call_tools_parallel(
+                                [(name, args) for name, args, _ in _mcp_calls]
+                            )
+                            tool_result_msgs: list[dict] = [
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_id,
+                                    "content": result_text,
+                                }
+                                for (tool_name, args, tool_id), (_, result_text)
+                                in zip(_mcp_calls, parallel_results)
+                            ]
+                            # Build follow-up: history + assistant tool_calls + tool results
+                            followup_msgs = list(openai_req["messages"]) + [
+                                {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "tool_calls": [
+                                        {
+                                            "id": tool_id,
+                                            "type": "function",
+                                            "function": {
+                                                "name": name,
+                                                "arguments": json.dumps(args),
+                                            },
+                                        }
+                                        for name, args, tool_id in _mcp_calls
+                                    ],
+                                }
+                            ] + tool_result_msgs
+                            openai_req2 = dict(openai_req)
+                            openai_req2["messages"] = followup_msgs
+                            openai_req2.pop("tools", None)   # no tools on follow-up
+                            resp_obj = non_streaming_response(
+                                config.ollama_host,
+                                openai_req2,
+                                orig_model,
+                                None,
+                                _cache_key_text,
+                                approx_input,
+                            )
+                            log.info("MCP TOOL LOOP: follow-up response received")
+
                     # --- VERIFICATION_AGENT ---
                     if config.enable_verification:
                         resp_text = ""
@@ -1638,6 +1737,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-classifier", action="store_true", help="Disable transcript classifier")
     p.add_argument("--no-ultraplan", action="store_true", help="Disable ULTRAPLAN")
     p.add_argument("--enable-verification", action="store_true", help="Enable VERIFICATION_AGENT")
+    p.add_argument("--no-tool-loop", action="store_true",
+                   help="Disable automatic MCP tool execution loop")
     p.add_argument("--no-teammem", action="store_true", help="Disable persistent team memory")
     p.add_argument("--no-compaction", action="store_true", help="Disable context compaction")
     p.add_argument("--compaction-max-tokens", type=int, default=24000,
@@ -1680,6 +1781,7 @@ def main():
         enable_classifier=not args.no_classifier,
         enable_ultraplan=not args.no_ultraplan,
         enable_verification=args.enable_verification,
+        enable_tool_loop=not args.no_tool_loop,
         enable_teammem=not args.no_teammem,
         enable_compaction=not args.no_compaction,
         compaction_max_tokens=args.compaction_max_tokens,
