@@ -7,7 +7,7 @@ set -euo pipefail
 # Configuration — edit these or override via environment variables
 # ---------------------------------------------------------------------------
 OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
-PRIMARY_MODEL="${PRIMARY_MODEL:-qwen3:8b}"
+PRIMARY_MODEL="${PRIMARY_MODEL:-qwen3:14b}"
 EMBED_MODEL="${EMBED_MODEL:-nomic-embed-text}"
 PROXY_PORT="${PROXY_PORT:-9099}"
 RAG_DIRS="${RAG_DIRS:-.}"

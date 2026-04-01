@@ -37,7 +37,7 @@ claude   # Claude Code CLI, now running on local Ollama
 
 ```bash
 # 1. Install Ollama — https://ollama.com
-ollama pull qwen3:8b
+ollama pull qwen3:14b
 ollama pull nomic-embed-text
 
 # 2. Index your codebase
@@ -58,12 +58,10 @@ claude
 
 | File | Description |
 |------|-------------|
-| `bridge_proxy_full.py` | Main bridge proxy server (~570 lines, stdlib only) |
+| `bridge_proxy_full.py` | Main bridge proxy server (~1800 lines, stdlib only) |
 | `rag_indexer.py` | Standalone RAG indexer CLI |
 | `run_full_bridge.sh` | Startup script with dependency checks |
-| `BRIDGE_FULL_GUIDE.md` | Full usage guide, CLI reference, troubleshooting |
-| `MAC_MINI_M4_OLLAMA_AGENT.md` | Standalone agent (no Claude Code dependency) |
-| `CLAUDE_CODE_LOCAL_OLLAMA_BRIDGE.md` | API format deep-dive and bridge analysis |
+| `BRIDGE_FULL_GUIDE.md` | Full usage guide, architecture, CLI reference, troubleshooting |
 
 ---
 
@@ -78,8 +76,8 @@ claude
 | Model | RAM | Notes |
 |-------|-----|-------|
 | `qwen3:4b` | ~3 GB | Fast, 8GB RAM machines |
-| `qwen3:8b` | ~6 GB | **Default** — good balance of speed and quality |
-| `qwen3:14b` | ~11 GB | Higher quality, 32GB RAM recommended |
+| `qwen3:8b` | ~6 GB | Good balance of speed and quality |
+| `qwen3:14b` | ~11 GB | **Default** — best quality/speed ratio, 32GB RAM recommended |
 | `qwen3:32b` | ~22 GB | Max quality, 64GB RAM recommended |
 
 ---

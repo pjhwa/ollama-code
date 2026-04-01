@@ -6,7 +6,7 @@ Drop-in replacement for the Anthropic API endpoint. Set:
     export ANTHROPIC_BASE_URL=http://localhost:9099
     export ANTHROPIC_API_KEY=local
 
-Default model: qwen3:8b (supports native thinking/reasoning mode)
+Default model: qwen3:14b (supports native thinking/reasoning mode)
 
 Features:
   - Prompt caching simulation (static/dynamic boundary marker, SHA256 + keep_alive=-1)
@@ -60,7 +60,7 @@ log = logging.getLogger("bridge")
 @dataclass
 class ProxyConfig:
     ollama_host: str = "http://localhost:11434"
-    primary_model: str = "qwen3:8b"
+    primary_model: str = "qwen3:14b"
     embed_model: str = "nomic-embed-text"
     verify_model: str = ""          # defaults to primary_model if empty
     proxy_port: int = 9099
@@ -1734,7 +1734,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     p.add_argument("--port", type=int, default=9099, help="Bind port (default: 9099)")
     p.add_argument("--ollama", default="http://localhost:11434", help="Ollama base URL")
-    p.add_argument("--model", default="qwen3:8b", help="Primary Ollama model")
+    p.add_argument("--model", default="qwen3:14b", help="Primary Ollama model")
     p.add_argument("--embed-model", default="nomic-embed-text", help="Embedding model")
     p.add_argument("--verify-model", default="", help="Verification model (default: same as primary)")
 
