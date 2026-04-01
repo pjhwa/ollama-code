@@ -189,14 +189,22 @@ class _CacheEntry:
     last_seen: float
 
 
+# Separator between static (cacheable) and dynamic (per-request) system prompt parts.
+# PromptCacheLayer hashes only the static part, so RAG/KAIROS changes don't break cache hits.
+_CACHE_BOUNDARY = "\n\n<!-- BRIDGE:DYNAMIC_START -->\n"
+
+
 class PromptCacheLayer:
     def __init__(self):
         self._cache: dict[str, _CacheEntry] = {}
         self._lock = threading.Lock()
 
-    def record(self, system_text: str, approx_tokens: int) -> tuple[int, int]:
-        """Returns (cache_creation_tokens, cache_read_tokens)."""
-        key = hashlib.sha256(system_text.encode()).hexdigest()
+    def record(self, static_text: str, approx_tokens: int) -> tuple[int, int]:
+        """Returns (cache_creation_tokens, cache_read_tokens).
+        Hashes only the static (user-supplied) part of the system prompt so
+        dynamic RAG/KAIROS additions don't break cache hits.
+        """
+        key = hashlib.sha256(static_text.encode()).hexdigest()
         with self._lock:
             entry = self._cache.get(key)
             if entry is None:
@@ -1413,9 +1421,9 @@ def make_handler_class(
 
             # Extract system text
             system_raw = req.get("system", "")
-            system_text = _extract_text(system_raw) if system_raw else ""
+            static_system = _extract_text(system_raw) if system_raw else ""
             user_text = optimizer.extract_user_text(req.get("messages", []))
-            approx_input = (len(system_text) + len(user_text)) // 4
+            approx_input = (len(static_system) + len(user_text)) // 4
 
             # --- TRANSCRIPT_CLASSIFIER ---
             if config.enable_classifier:
@@ -1433,31 +1441,44 @@ def make_handler_class(
                 if score > 0:
                     log.info("CLASSIFIER: risk=%.1f (auto-approved)", score)
 
+            # Build dynamic blocks (change per-request — excluded from cache key)
+            dynamic_parts: list[str] = []
+
             # --- TEAMMEM: inject persistent memory ---
             if config.enable_teammem:
                 mem_block = team_mem.as_context_block()
                 if mem_block:
-                    system_text = system_text + "\n\n" + mem_block if system_text else mem_block
+                    dynamic_parts.append(mem_block)
 
             # --- KAIROS: inject findings ---
             if config.enable_kairos and kairos:
                 findings = kairos.pop_findings()
                 if findings:
-                    kairos_block = "## KAIROS Background Findings\n" + "\n".join(f"- {f}" for f in findings)
-                    system_text = system_text + "\n\n" + kairos_block if system_text else kairos_block
+                    dynamic_parts.append(
+                        "## KAIROS Background Findings\n" + "\n".join(f"- {f}" for f in findings)
+                    )
 
             # --- RAG: inject relevant code context ---
             if config.enable_rag and user_text:
                 rag_ctx = rag.build_context(user_text)
                 if rag_ctx:
-                    system_text = system_text + "\n\n" + rag_ctx if system_text else rag_ctx
+                    dynamic_parts.append(rag_ctx)
 
             # --- ULTRAPLAN: inject plan for complex requests ---
             if config.enable_ultraplan and ultraplan.is_complex(user_text):
                 log.info("ULTRAPLAN: generating plan for complex request")
                 plan = ultraplan.generate_plan(user_text)
                 if plan:
-                    system_text = ultraplan.inject_plan(system_text, plan)
+                    dynamic_parts.append(f"## ULTRAPLAN — Pre-computed Implementation Plan\n{plan}")
+
+            # Assemble final system text: static part + boundary + dynamic parts
+            if dynamic_parts:
+                system_text = static_system + _CACHE_BOUNDARY + "\n\n".join(dynamic_parts)
+            else:
+                system_text = static_system
+
+            # Cache key uses only the static part (dynamic parts must not break cache)
+            _cache_key_text = static_system if dynamic_parts else system_text
 
             # --- MCP: inject available tools ---
             if config.enable_mcp:
@@ -1467,7 +1488,7 @@ def make_handler_class(
                     req = dict(req)
                     req["tools"] = existing_tools + mcp_tools
 
-            # Patch system back into request
+            # Patch system back into request (with static + dynamic combined)
             if system_text:
                 req = dict(req)
                 req["system"] = system_text
@@ -1525,7 +1546,7 @@ def make_handler_class(
                     openai_req,
                     orig_model,
                     cache_layer if config.enable_cache else None,
-                    system_text,
+                    _cache_key_text,
                     approx_input,
                 )
                 try:
@@ -1543,7 +1564,7 @@ def make_handler_class(
                         openai_req,
                         orig_model,
                         cache_layer if config.enable_cache else None,
-                        system_text,
+                        _cache_key_text,
                         approx_input,
                         strip_think=(config.enable_thinking and is_thinking_model(config.primary_model, config.thinking_models)),
                     )
@@ -1568,7 +1589,7 @@ def make_handler_class(
                                     openai_req2,
                                     orig_model,
                                     None,
-                                    system_text,
+                                    _cache_key_text,
                                     approx_input,
                                 )
 
