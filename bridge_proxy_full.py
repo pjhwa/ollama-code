@@ -806,6 +806,16 @@ class LocalModelOptimizer:
                 content = msgs[i]["content"]
                 if isinstance(content, str) and not content.startswith("/think"):
                     msgs[i]["content"] = "/think\n" + content
+                elif isinstance(content, list):
+                    # Find first text block and prepend /think
+                    new_content = list(content)
+                    for j, block in enumerate(new_content):
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            t = block.get("text", "")
+                            if not t.startswith("/think"):
+                                new_content[j] = {**block, "text": "/think\n" + t}
+                            break
+                    msgs[i]["content"] = new_content
                 break
         return msgs
 
@@ -1052,26 +1062,44 @@ def stream_openai_to_anthropic(
                     elif finish in ("stop", "length"):
                         stop_reason = "end_turn" if finish == "stop" else "max_tokens"
 
-                    # Text delta — buffer to strip <think> tags for thinking models
+                    # Text delta — strip <think>...</think> for thinking models
                     text = delta.get("content") or ""
                     if text:
-                        if "<think>" in text or "</think>" in text or _in_think_block:
+                        if _in_think_block:
                             _think_buffer += text
-                            cleaned = re.sub(r"<think>.*?</think>", "", _think_buffer, flags=re.DOTALL)
-                            if cleaned != _think_buffer and not re.search(r"<think>(?!.*</think>)", cleaned, re.DOTALL):
-                                text = cleaned
-                                _think_buffer = ""
-                                _in_think_block = False
-                            else:
-                                _in_think_block = "<think>" in _think_buffer and "</think>" not in _think_buffer
-                                continue
-                        if text:
+                        elif "<think>" in text:
+                            # Flush any text before the <think> tag immediately
+                            pre, _, rest = text.partition("<think>")
+                            if pre:
+                                output_tokens += len(pre) // 4 + 1
+                                yield _sse("content_block_delta", {
+                                    "type": "content_block_delta",
+                                    "index": 0,
+                                    "delta": {"type": "text_delta", "text": pre},
+                                })
+                            _think_buffer = "<think>" + rest
+                            _in_think_block = True
+                        else:
                             output_tokens += len(text) // 4 + 1
                             yield _sse("content_block_delta", {
                                 "type": "content_block_delta",
                                 "index": 0,
                                 "delta": {"type": "text_delta", "text": text},
                             })
+
+                        # Try to close the think block
+                        if _in_think_block and "</think>" in _think_buffer:
+                            _, _, after = _think_buffer.partition("</think>")
+                            _think_buffer = ""
+                            _in_think_block = False
+                            if after:
+                                # Recurse-style: emit remaining text after </think>
+                                output_tokens += len(after) // 4 + 1
+                                yield _sse("content_block_delta", {
+                                    "type": "content_block_delta",
+                                    "index": 0,
+                                    "delta": {"type": "text_delta", "text": after},
+                                })
 
                     # Tool call deltas
                     for tc in delta.get("tool_calls", []):
@@ -1101,6 +1129,17 @@ def stream_openai_to_anthropic(
                     "index": 0,
                     "delta": {"type": "text_delta", "text": f"\n[Bridge Error: {e}]"},
                 })
+
+    # Flush any remaining think buffer if </think> was never received (e.g. truncated output)
+    if _think_buffer:
+        leftover = re.sub(r"<think>.*", "", _think_buffer, flags=re.DOTALL).strip()
+        if leftover:
+            yield _sse("content_block_delta", {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": leftover},
+            })
+        _think_buffer = ""
 
     # content_block_stop for text
     yield _sse("content_block_stop", {"type": "content_block_stop", "index": 0})
@@ -1153,6 +1192,7 @@ def non_streaming_response(
     cache_layer: Optional[PromptCacheLayer],
     system_text: str,
     input_tokens_approx: int,
+    strip_think: bool = False,
 ) -> dict:
     """Blocking call; returns Anthropic Messages response dict."""
     msg_id = f"msg_{uuid.uuid4().hex[:16]}"
@@ -1179,7 +1219,7 @@ def non_streaming_response(
 
     content_blocks: list[dict] = []
     text = msg.get("content") or ""
-    if text:
+    if text and strip_think:
         text = LocalModelOptimizer.strip_thinking_tags(text)
     if text:
         content_blocks.append({"type": "text", "text": text})
@@ -1362,11 +1402,9 @@ def make_handler_class(
 
             # Convert to OpenAI format
             openai_req = convert_anthropic_to_openai(req, config.primary_model, config)
-            # Qwen3 thinking mode: activate via /think prefix
             if (config.enable_thinking
                     and is_thinking_model(config.primary_model, config.thinking_models)):
-                openai_req["messages"] = optimizer.apply_thinking_mode(openai_req["messages"])
-                log.debug("THINKING: activated for model %s", config.primary_model)
+                log.debug("THINKING: activated via options for model %s", config.primary_model)
 
             # Streaming path
             if is_streaming:
@@ -1401,6 +1439,7 @@ def make_handler_class(
                         cache_layer if config.enable_cache else None,
                         system_text,
                         approx_input,
+                        strip_think=(config.enable_thinking and is_thinking_model(config.primary_model, config.thinking_models)),
                     )
 
                     # --- VERIFICATION_AGENT ---
