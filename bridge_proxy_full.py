@@ -813,11 +813,11 @@ class ConversationCompactor:
         non_system = [m for m in messages if m.get("role") != "system"]
 
         keep_n = 8  # keep last 4 user/assistant pairs
-        old_msgs = non_system[:-keep_n] if len(non_system) > keep_n else []
-        recent_msgs = non_system[-keep_n:] if len(non_system) >= keep_n else non_system
-
-        if not old_msgs:
+        if len(non_system) <= keep_n:
+            # Nothing old enough to summarize — caller should not have called compact()
             return messages
+        old_msgs = non_system[:-keep_n]
+        recent_msgs = non_system[-keep_n:]
 
         conv_text = "\n".join(
             f"{m['role'].upper()}: {(m['content'] if isinstance(m.get('content'), str) else str(m.get('content', '')))[:400]}"
@@ -847,11 +847,23 @@ class ConversationCompactor:
             log.warning("COMPACTION: summarization failed: %s — skipping", e)
             return messages
 
-        compacted = system_msgs + [
+        summary_turns: list[dict] = [
             {"role": "user", "content": f"[Prior Conversation Summary]\n{summary}"},
-            {"role": "assistant", "content": "Understood. I have context from our earlier conversation."},
-        ] + recent_msgs
+        ]
+        # Only add assistant ack if the next message is not also from assistant
+        if not recent_msgs or recent_msgs[0].get("role") != "assistant":
+            summary_turns.append(
+                {"role": "assistant", "content": "Understood. I have context from our earlier conversation."}
+            )
+        compacted = system_msgs + summary_turns + recent_msgs
 
+        compacted_tokens = self.estimate_tokens(compacted)
+        if compacted_tokens > self._cfg.compaction_target_tokens:
+            log.warning(
+                "COMPACTION: compacted result (%d est. tokens) still exceeds target (%d). "
+                "Recent turns alone are large — compaction did its best.",
+                compacted_tokens, self._cfg.compaction_target_tokens,
+            )
         log.info(
             "COMPACTION: %d→%d messages (est. tokens %d→%d)",
             len(messages), len(compacted),
