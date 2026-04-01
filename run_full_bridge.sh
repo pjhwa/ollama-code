@@ -133,15 +133,23 @@ fi
 # ---------------------------------------------------------------------------
 export ANTHROPIC_BASE_URL="http://localhost:$PROXY_PORT"
 export ANTHROPIC_API_KEY="local-ollama-bridge"
+# ANTHROPIC_CUSTOM_MODEL_OPTION tells Claude Code CLI to skip model validation
+# for this exact model name (see validateModel.ts in Claude Code source).
+# Without this, the CLI tries to verify the model via API and may reject
+# non-claude-* model IDs at session startup.
+export ANTHROPIC_CUSTOM_MODEL_OPTION="$PRIMARY_MODEL"
 
 echo ""
 echo -e "${GREEN}┌─────────────────────────────────────────────┐${NC}"
 echo -e "${GREEN}│  Bridge proxy starting on port $PROXY_PORT       │${NC}"
 echo -e "${GREEN}│                                             │${NC}"
+echo -e "${GREEN}│  Run in your claude terminal:               │${NC}"
 echo -e "${GREEN}│  export ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL  │${NC}"
 echo -e "${GREEN}│  export ANTHROPIC_API_KEY=local-ollama-bridge │${NC}"
+echo -e "${GREEN}│  export ANTHROPIC_CUSTOM_MODEL_OPTION=$PRIMARY_MODEL │${NC}"
 echo -e "${GREEN}│                                             │${NC}"
-echo -e "${GREEN}│  Model: $PRIMARY_MODEL                   │${NC}"
+echo -e "${GREEN}│  Then: claude --model $PRIMARY_MODEL      │${NC}"
+echo -e "${GREEN}│  Or:   claude  (uses $PRIMARY_MODEL auto)  │${NC}"
 echo -e "${GREEN}└─────────────────────────────────────────────┘${NC}"
 echo ""
 echo "Features enabled:"
