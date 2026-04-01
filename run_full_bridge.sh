@@ -56,19 +56,51 @@ if ! curl -sf "$OLLAMA_HOST/api/tags" >/dev/null 2>&1; then
         done
         info "Ollama started"
     else
-        error "Ollama not running and 'ollama' binary not found. Install from https://ollama.com"
+        echo ""
+        echo -e "${RED}[ERROR]${NC} Ollama is not running at $OLLAMA_HOST"
+        echo "  'ollama' binary not found in PATH either."
+        echo ""
+        echo "  Fix options:"
+        echo "    1. Install Ollama: curl -fsSL https://ollama.com/install.sh | sh"
+        echo "    2. Start Ollama:   ollama serve"
+        echo "    3. Remote Ollama:  export OLLAMA_HOST=http://<ip>:11434"
+        echo ""
+        exit 1
     fi
 else
     info "Ollama is running"
 fi
 
 # ---------------------------------------------------------------------------
+# Helper: check if a model exists via Ollama HTTP API (no 'ollama' binary needed)
+# ---------------------------------------------------------------------------
+ollama_has_model() {
+    local model_name="$1"
+    local base="${model_name%%:*}"   # strip tag, e.g. qwen3:14b → qwen3
+    curl -sf "$OLLAMA_HOST/api/tags" 2>/dev/null \
+        | python3 -c "import json,sys; d=json.load(sys.stdin); names=[m['name'] for m in d.get('models',[])]; exit(0 if any('$base' in n for n in names) else 1)" 2>/dev/null
+}
+
+ollama_pull_model() {
+    local model_name="$1"
+    if command -v ollama >/dev/null 2>&1; then
+        ollama pull "$model_name"
+    else
+        # Pull via HTTP API (streams progress JSON; we just wait for completion)
+        warn "Pulling $model_name via HTTP API (no ollama binary in PATH)..."
+        curl -sf "$OLLAMA_HOST/api/pull" \
+            -d "{\"name\":\"$model_name\",\"stream\":false}" \
+            --max-time 600 >/dev/null 2>&1
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Check primary model
 # ---------------------------------------------------------------------------
 info "Checking primary model: $PRIMARY_MODEL"
-if ! ollama list 2>/dev/null | grep -q "${PRIMARY_MODEL%%:*}"; then
+if ! ollama_has_model "$PRIMARY_MODEL"; then
     warn "Model '$PRIMARY_MODEL' not found — pulling..."
-    ollama pull "$PRIMARY_MODEL" || error "Failed to pull $PRIMARY_MODEL"
+    ollama_pull_model "$PRIMARY_MODEL" || error "Failed to pull $PRIMARY_MODEL. Run: ollama pull $PRIMARY_MODEL"
 fi
 info "Primary model ready: $PRIMARY_MODEL"
 
@@ -76,9 +108,9 @@ info "Primary model ready: $PRIMARY_MODEL"
 # Check embedding model
 # ---------------------------------------------------------------------------
 info "Checking embedding model: $EMBED_MODEL"
-if ! ollama list 2>/dev/null | grep -q "$EMBED_MODEL"; then
+if ! ollama_has_model "$EMBED_MODEL"; then
     warn "Embedding model '$EMBED_MODEL' not found — pulling..."
-    ollama pull "$EMBED_MODEL" || warn "Failed to pull $EMBED_MODEL — RAG will be degraded"
+    ollama_pull_model "$EMBED_MODEL" || warn "Failed to pull $EMBED_MODEL — RAG will be degraded"
 fi
 
 # ---------------------------------------------------------------------------
