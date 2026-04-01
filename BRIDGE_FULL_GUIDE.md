@@ -8,7 +8,7 @@
 
 ```bash
 # 1. Install Ollama and pull models
-ollama pull qwen2.5-coder:14b
+ollama pull qwen3:8b
 ollama pull nomic-embed-text
 
 # 2. Build the RAG index for your codebase
@@ -20,7 +20,7 @@ python3 rag_indexer.py index --dirs .
 # 4. In another terminal, configure Claude Code
 export ANTHROPIC_BASE_URL=http://localhost:9099
 export ANTHROPIC_API_KEY=local-ollama-bridge
-claude   # or: claude --model qwen2.5-coder:14b
+claude   # or: PRIMARY_MODEL=qwen3:14b ./run_full_bridge.sh
 ```
 
 ---
@@ -57,7 +57,7 @@ Claude Code CLI
                         │  OpenAI /v1/chat/completions
                         ▼
                    Ollama (local)
-              qwen2.5-coder:14b (or any)
+              qwen3:8b (or any)
 ```
 
 ---
@@ -191,16 +191,17 @@ Persists key/value pairs to `.bridge_memory.json`. Auto-saves context when the u
 
 ---
 
-## Model Recommendations (Mac Mini M4 32GB)
+## Model Recommendations
 
 | Model | Size | Use Case |
 |-------|------|----------|
-| `qwen2.5-coder:7b` | ~5.8 GB | Fast, good for small files |
-| `qwen2.5-coder:14b` | ~10.6 GB | **Recommended** — best speed/quality |
-| `qwen2.5-coder:32b-q3_K_M` | ~17.1 GB | Max quality, slower |
-| `deepseek-coder-v2:16b` | ~11 GB | Alternative, strong at reasoning |
+| `qwen3:4b` | ~3 GB | Fast, 8GB RAM machines |
+| `qwen3:8b` | ~6 GB | **Default** — best speed/quality balance |
+| `qwen3:14b` | ~11 GB | Higher quality, 32GB RAM recommended |
+| `qwen3:32b` | ~22 GB | Max quality, 64GB RAM recommended |
+| `deepseek-r1:8b` | ~5 GB | Alternative with native reasoning |
 
-Leave ~12 GB for macOS + other processes. `qwen2.5-coder:14b` + `nomic-embed-text` (~274 MB) = ~11 GB total.
+`qwen3:8b` + `nomic-embed-text` (~274 MB) ≈ ~6.3 GB total. Leave sufficient RAM for the OS and other processes.
 
 ---
 
@@ -213,7 +214,7 @@ Core:
   --host HOST              Bind host (default: 0.0.0.0)
   --port PORT              Bind port (default: 9099)
   --ollama URL             Ollama base URL (default: http://localhost:11434)
-  --model MODEL            Primary model (default: qwen2.5-coder:14b)
+  --model MODEL            Primary model (default: qwen3:8b)
   --embed-model MODEL      Embedding model (default: nomic-embed-text)
   --verify-model MODEL     Verification model (default: same as primary)
 
@@ -243,6 +244,15 @@ Memory:
 
 MCP:
   --mcp-server NAME CMD... Add MCP server (repeatable)
+  --no-tool-loop           Disable automatic parallel MCP tool execution loop
+
+Thinking (qwen3/deepseek-r1/qwq):
+  --no-thinking            Disable thinking mode for supported models
+  --thinking-budget N      Max tokens for thinking (default: 8192)
+
+Context Compaction:
+  --no-compaction          Disable auto conversation compaction
+  --compaction-max-tokens N  Token threshold to trigger compaction (default: 24000)
 
 Other:
   -v, --verbose            Enable debug logging
@@ -261,7 +271,7 @@ curl http://localhost:9099/health
 **Model not found:**
 ```bash
 ollama list
-ollama pull qwen2.5-coder:14b
+ollama pull qwen3:8b
 ```
 
 **RAG returning no results:**
@@ -272,9 +282,9 @@ python3 rag_indexer.py index --force  # rebuild from scratch
 ```
 
 **Out of memory:**
-Switch to a smaller model or use Q3_K_M quantization:
+Switch to a smaller model:
 ```bash
-PRIMARY_MODEL=qwen2.5-coder:7b ./run_full_bridge.sh
+PRIMARY_MODEL=qwen3:4b ./run_full_bridge.sh
 ```
 
 **Request blocked by classifier:**
@@ -293,7 +303,7 @@ print(score, reasons)
 
 ```bash
 export OLLAMA_HOST=http://localhost:11434
-export PRIMARY_MODEL=qwen2.5-coder:14b
+export PRIMARY_MODEL=qwen3:8b
 export EMBED_MODEL=nomic-embed-text
 export PROXY_PORT=9099
 export RAG_DIRS=". src/ tests/"
@@ -315,6 +325,54 @@ export ANTHROPIC_API_KEY=local-ollama-bridge
 | `run_full_bridge.sh` | Startup script with dependency checks |
 | `.bridge_rag_index.json` | Vector index (created on first index run) |
 | `.bridge_memory.json` | TEAMMEM persistent store (created at first save) |
+
+---
+
+## New Features
+
+### Qwen3 Thinking Mode
+
+qwen3 계열 모델(qwen3:8b, qwen3:14b, qwen3:32b)과 DeepSeek-R1, QwQ는 네이티브 추론 모드를 지원합니다.
+브릿지는 Ollama options에 `think: true`를 설정해 자동으로 추론을 활성화하고,
+응답에서 `<think>...</think>` 블록을 제거 후 최종 답변만 반환합니다.
+
+| 옵션 | 기본값 | 설명 |
+|---|---|---|
+| `--no-thinking` | off | Thinking mode 비활성화 |
+| `--thinking-budget N` | 8192 | Thinking 최대 토큰 수 |
+
+지원 모델: `qwen3`, `deepseek-r1`, `qwq`, `marco-o1` (모델명 포함 여부로 자동 감지)
+
+### Context Compaction
+
+대화 히스토리가 24,000 토큰을 초과하면 자동으로 이전 대화를 요약합니다.
+최근 4턴(8메시지)은 원본 그대로 유지하고, 나머지는 모델 요약 블록으로 압축합니다.
+요약 실패 시 원본 메시지를 그대로 유지합니다(fail-safe).
+
+| 옵션 | 기본값 | 설명 |
+|---|---|---|
+| `--no-compaction` | off | 비활성화 |
+| `--compaction-max-tokens N` | 24000 | 압축 트리거 토큰 임계값 |
+
+### Cache Boundary Marker
+
+시스템 프롬프트를 정적(사용자 지정) / 동적(RAG, KAIROS, ULTRAPLAN, TEAMMEM) 부분으로 분리합니다.
+캐시 해시는 정적 부분만 계산하므로, RAG 컨텍스트나 KAIROS 결과가 바뀌어도 캐시 히트가 유지됩니다.
+
+경계 마커: `<!-- BRIDGE:DYNAMIC_START -->`
+
+이 개선으로 캐시 히트율이 크게 향상됩니다 (이전: 동적 내용 변경 시 항상 미스 → 이후: 정적 시스템 프롬프트 동일하면 히트).
+
+### Parallel MCP Tool Execution
+
+모델이 한 번에 여러 `mcp__*` 도구를 호출할 때, `ThreadPoolExecutor`로 병렬 실행합니다.
+도구 결과를 모아 모델에 다시 전달하는 agentic loop를 내장합니다 (1라운드).
+
+| 옵션 | 기본값 | 설명 |
+|---|---|---|
+| `--no-tool-loop` | off | 자동 MCP 도구 실행 루프 비활성화 |
+
+병렬 실행으로 N개 도구의 총 레이턴시 ≈ max(개별 레이턴시) (직렬 대비 N배 빠름).
 
 ---
 

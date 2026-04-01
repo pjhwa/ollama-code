@@ -26,6 +26,10 @@ claude   # Claude Code CLI, now running on local Ollama
 | **ULTRAPLAN** | Generates step-by-step plan before coding complex requests |
 | **VERIFICATION_AGENT** | Optional secondary model pass for quality verification |
 | **TEAMMEM** | Persistent memory across sessions (`.bridge_memory.json`) |
+| **Qwen3 Thinking Mode** | Auto-enables native reasoning for qwen3/deepseek-r1/qwq models; strips `<think>` tags |
+| **Context Compaction** | Auto-summarizes history when it exceeds 24K tokens; keeps last 4 turns intact |
+| **Cache Boundary Marker** | Splits system prompt into static/dynamic parts; cache hash from static only |
+| **Parallel MCP Tool Execution** | Runs multiple `mcp__*` tool calls concurrently via ThreadPoolExecutor |
 
 ---
 
@@ -33,7 +37,7 @@ claude   # Claude Code CLI, now running on local Ollama
 
 ```bash
 # 1. Install Ollama — https://ollama.com
-ollama pull qwen2.5-coder:14b
+ollama pull qwen3:8b
 ollama pull nomic-embed-text
 
 # 2. Index your codebase
@@ -69,13 +73,14 @@ claude
 - [Ollama](https://ollama.com) running locally
 - Recommended: Mac Mini M4 (32GB) or any machine with 16GB+ RAM
 
-## Recommended Models (Mac Mini M4 32GB)
+## Recommended Models
 
 | Model | RAM | Notes |
 |-------|-----|-------|
-| `qwen2.5-coder:7b` | ~6 GB | Fast |
-| `qwen2.5-coder:14b` | ~11 GB | **Recommended** |
-| `qwen2.5-coder:32b-q3_K_M` | ~17 GB | Max quality |
+| `qwen3:4b` | ~3 GB | Fast, 8GB RAM machines |
+| `qwen3:8b` | ~6 GB | **Default** — good balance of speed and quality |
+| `qwen3:14b` | ~11 GB | Higher quality, 32GB RAM recommended |
+| `qwen3:32b` | ~22 GB | Max quality, 64GB RAM recommended |
 
 ---
 

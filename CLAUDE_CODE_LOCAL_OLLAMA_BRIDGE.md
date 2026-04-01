@@ -16,6 +16,7 @@
 6. [기능 호환성 매트릭스](#6-기능-호환성-매트릭스)
 7. [성능 격차 정직한 평가](#7-성능-격차-정직한-평가)
 8. [한계점 및 권장사항](#8-한계점-및-권장사항)
+9. [빠른 시작 (Qwen3)](#빠른-시작-qwen3)
 
 ---
 
@@ -1154,3 +1155,43 @@ claude --prompt "이 모듈 전체를 async로 리팩토링해줘"
 ---
 
 *생성: Claude Opus 4.6 - Claude Code 코드베이스 역공학 + API 프로토콜 분석*
+
+---
+
+## 빠른 시작 (Qwen3)
+
+### 1. Ollama 설치
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+### 2. 모델 선택 및 다운로드
+
+| RAM | 권장 모델 | 명령 |
+|---|---|---|
+| 8GB | qwen3:4b | `ollama pull qwen3:4b` |
+| 16GB | **qwen3:8b** (기본값) | `ollama pull qwen3:8b` |
+| 32GB | qwen3:14b | `ollama pull qwen3:14b` |
+| 64GB+ | qwen3:32b | `ollama pull qwen3:32b` |
+
+```bash
+# 기본값 (16GB RAM 기준)
+ollama pull qwen3:8b
+ollama pull nomic-embed-text
+```
+
+### 3. 브릿지 실행
+```bash
+./run_full_bridge.sh
+# 또는 모델 지정:
+PRIMARY_MODEL=qwen3:14b ./run_full_bridge.sh
+# Thinking 모드 끄기:
+./run_full_bridge.sh --no-thinking
+```
+
+### 4. Claude Code 연결
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:9099
+export ANTHROPIC_API_KEY=local-ollama-bridge
+claude
+```
