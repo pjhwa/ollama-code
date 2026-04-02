@@ -19,3 +19,29 @@ def test_run_result_fields():
     assert r.stdout == "out"
     assert r.stderr == "err"
     assert r.elapsed_sec == 1.5
+
+
+from runners.python_runner import run as py_run
+
+
+def test_python_runner_hello():
+    result = py_run('print("hello")', "", timeout=5)
+    assert result.stdout.strip() == "hello"
+    assert result.exit_code == 0
+
+
+def test_python_runner_stdin():
+    code = "import sys; n = int(sys.stdin.read().strip()); print(n * 2)"
+    result = py_run(code, "21", timeout=5)
+    assert result.stdout.strip() == "42"
+
+
+def test_python_runner_syntax_error():
+    result = py_run("def foo(:", "", timeout=5)
+    assert result.exit_code != 0
+    assert result.stderr != ""
+
+
+def test_python_runner_timeout():
+    result = py_run("import time; time.sleep(10)", "", timeout=1)
+    assert result.exit_code != 0
