@@ -87,17 +87,22 @@ def _run_target(
     code = extract_code(llm_resp.text, problem.lang)
     code_extracted = bool(code and len(code) > 5)
 
-    # 3. Run test cases
-    runner = get_runner(problem.lang)
-    mode = "keyword" if problem.category == "code_review" else "exact"
-
-    run_results = []
-    for tc in problem.test_cases:
-        rr = runner(code, tc.input, timeout=problem.timeout_sec)
-        run_results.append(rr)
-
-    # 4. Score
-    scored = score_result(problem.id, problem.test_cases, run_results, mode=mode)
+    # 3. Run test cases / score
+    if problem.category == "code_review":
+        # code_review: score LLM text directly (no code execution)
+        from runners.base import RunResult as _RunResult
+        run_results = [
+            _RunResult(stdout=llm_resp.text, stderr="", exit_code=0, elapsed_sec=0.0)
+            for _ in problem.test_cases
+        ]
+        scored = score_result(problem.id, problem.test_cases, run_results, mode="keyword")
+    else:
+        runner = get_runner(problem.lang)
+        run_results = []
+        for tc in problem.test_cases:
+            rr = runner(code, tc.input, timeout=problem.timeout_sec)
+            run_results.append(rr)
+        scored = score_result(problem.id, problem.test_cases, run_results, mode="exact")
 
     return TargetRunRecord(
         target=target,
