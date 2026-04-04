@@ -1,0 +1,23 @@
+id: test_js_array_utils
+category: unit_test
+lang: javascript
+title: "Array 유틸리티 테스트 작성 (JS)"
+prompt: |
+  아래 배열 유틸리티 함수들에 대한 테스트를 작성하고 실행 결과를 출력하라.
+  최소 5개 이상의 테스트 케이스를 직접 구현하고(assert 사용),
+  모두 통과하면 PASS를 출력하라.
+
+  ```javascript
+  const unique = arr => [...new Set(arr)];
+  const flatten = arr => arr.flat(Infinity);
+  const chunk = (arr, size) => {
+    const result = [];
+    for (let i = 0; i < arr.length; i += size) result.push(arr.slice(i, i + size));
+    return result;
+  };
+  ```
+test_cases:
+  - input: ""
+    output: "PASS"
+timeout_sec: 10
+tags: [testing, arrays, javascript]

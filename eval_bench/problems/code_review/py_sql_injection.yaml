@@ -1,0 +1,19 @@
+id: review_py_sql_injection
+category: code_review
+lang: python
+title: "SQL Injection 취약점 리뷰"
+prompt: |
+  아래 코드의 보안 취약점을 분석하고 개선 방법을 설명하라.
+
+  ```python
+  def get_user(username):
+      query = f"SELECT * FROM users WHERE username = '{username}'"
+      return db.execute(query)
+  ```
+
+  어떤 취약점이 있으며, 어떻게 수정해야 하는지 설명하라.
+test_cases:
+  - input: ""
+    output: "sql_injection,parameterized"
+timeout_sec: 30
+tags: [security, sql]

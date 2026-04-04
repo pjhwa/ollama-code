@@ -1,0 +1,24 @@
+id: fix_py_recursion_base
+category: bug_fix
+lang: python
+title: "재귀 기저 조건 버그 수정"
+prompt: |
+  아래 팩토리얼 함수에 버그가 있다. 수정하여 올바른 프로그램을 작성하라.
+  표준입력으로 n을 받아 n!을 출력한다.
+
+  버그 있는 코드:
+  ```python
+  def factorial(n):
+      return n * factorial(n - 1)  # 버그: 기저 조건 없음
+  ```
+test_cases:
+  - input: "0"
+    output: "1"
+  - input: "1"
+    output: "1"
+  - input: "5"
+    output: "120"
+  - input: "10"
+    output: "3628800"
+timeout_sec: 10
+tags: [recursion, base_case]

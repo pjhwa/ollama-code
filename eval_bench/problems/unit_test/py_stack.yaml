@@ -1,0 +1,33 @@
+id: test_py_stack
+category: unit_test
+lang: python
+title: "Stack 유닛테스트 작성"
+prompt: |
+  아래 Stack 클래스에 대한 pytest 유닛테스트를 작성하라.
+  push, pop, peek, is_empty, size 메서드를 모두 테스트해야 한다.
+  빈 스택에서 pop/peek 호출 시 IndexError가 발생하는 것도 테스트하라.
+  테스트 파일을 실행하면 모든 테스트가 통과해야 한다.
+
+  ```python
+  class Stack:
+      def __init__(self): self._items = []
+      def push(self, item): self._items.append(item)
+      def pop(self):
+          if not self._items: raise IndexError("pop from empty stack")
+          return self._items.pop()
+      def peek(self):
+          if not self._items: raise IndexError("peek from empty stack")
+          return self._items[-1]
+      def is_empty(self): return len(self._items) == 0
+      def size(self): return len(self._items)
+  ```
+
+  위 Stack 클래스를 포함한 완전한 테스트 파일을 작성하라.
+  파일을 실행하면 "X passed" 형태의 pytest 출력에서 passed 개수를 출력한다.
+  최소 6개 테스트가 통과해야 한다.
+  힌트: subprocess로 pytest를 실행하고 통과한 테스트 수를 파싱하여 출력하라.
+test_cases:
+  - input: ""
+    output: "PASS"
+timeout_sec: 30
+tags: [testing, data_structures]

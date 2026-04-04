@@ -1,0 +1,28 @@
+id: fix_py_mutable_default
+category: bug_fix
+lang: python
+title: "가변 기본 인자 버그 수정"
+prompt: |
+  아래 Python 함수에는 가변 기본 인자(mutable default argument) 버그가 있다.
+  버그를 수정하여 올바르게 동작하는 전체 프로그램을 작성하라.
+  표준입력으로 공백으로 구분된 두 숫자를 받아, 각각 append 후 리스트를 출력한다.
+  두 호출의 리스트는 독립적이어야 한다.
+
+  버그 있는 코드:
+  ```python
+  def add_item(item, lst=[]):  # 버그: 기본 인자가 공유됨
+      lst.append(item)
+      return lst
+  ```
+
+  입력: 1 2
+  출력:
+  [1]
+  [2]
+test_cases:
+  - input: "1 2"
+    output: "[1]\n[2]"
+  - input: "10 20"
+    output: "[10]\n[20]"
+timeout_sec: 10
+tags: [python_gotchas, functions]

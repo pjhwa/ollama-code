@@ -1,0 +1,19 @@
+id: fix_js_closure_loop
+category: bug_fix
+lang: javascript
+title: "클로저 루프 버그 수정 (JS)"
+prompt: |
+  아래 코드는 0~4를 순서대로 출력하려 하지만 버그가 있다.
+  버그를 수정하여 0 1 2 3 4를 한 줄씩 출력하는 코드를 작성하라.
+
+  버그 있는 코드:
+  ```javascript
+  for (var i = 0; i < 5; i++) {
+    setTimeout(() => console.log(i), i * 10);
+  }
+  ```
+test_cases:
+  - input: ""
+    output: "0\n1\n2\n3\n4"
+timeout_sec: 10
+tags: [closures, var_vs_let]

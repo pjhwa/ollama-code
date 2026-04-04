@@ -1,0 +1,23 @@
+id: review_py_performance
+category: code_review
+lang: python
+title: "성능 이슈 코드 리뷰"
+prompt: |
+  아래 코드의 성능 문제를 분석하고 개선 방법을 설명하라.
+
+  ```python
+  def find_duplicates(lst):
+      duplicates = []
+      for i in range(len(lst)):
+          for j in range(i + 1, len(lst)):
+              if lst[i] == lst[j] and lst[i] not in duplicates:
+                  duplicates.append(lst[i])
+      return duplicates
+  ```
+
+  시간 복잡도 문제와 개선된 O(n) 구현 방법을 설명하라.
+test_cases:
+  - input: ""
+    output: "O(n),set,hash"
+timeout_sec: 30
+tags: [performance, complexity]
