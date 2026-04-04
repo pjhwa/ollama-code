@@ -1,0 +1,21 @@
+id: algo_bash_find_duplicates
+category: algorithm
+lang: bash
+title: "중복 단어 찾기 (bash)"
+prompt: |
+  표준입력으로 공백으로 구분된 단어 목록을 받아, 2회 이상 등장하는 단어를
+  알파벳 오름차순으로 한 줄씩 출력하라. 없으면 아무것도 출력하지 않는다.
+
+  입력: apple banana apple cherry banana apple
+  출력:
+  apple
+  banana
+test_cases:
+  - input: "apple banana apple cherry banana apple"
+    output: "apple\nbanana"
+  - input: "one two three"
+    output: ""
+  - input: "z a z b a z"
+    output: "a\nz"
+timeout_sec: 10
+tags: [string, sorting]
