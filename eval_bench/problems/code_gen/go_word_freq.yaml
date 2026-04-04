@@ -1,0 +1,20 @@
+id: gen_go_word_freq
+category: code_gen
+lang: go
+title: "단어 빈도 (Go)"
+prompt: |
+  표준입력 한 줄을 공백으로 나눠 각 단어의 빈도를 세어
+  알파벳 오름차순으로 "단어:횟수" 형식으로 출력하라.
+
+  입력: go is great go
+  출력:
+  go:2
+  great:1
+  is:1
+test_cases:
+  - input: "go is great go"
+    output: "go:2\ngreat:1\nis:1"
+  - input: "a b a"
+    output: "a:2\nb:1"
+timeout_sec: 15
+tags: [string, map]

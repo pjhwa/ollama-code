@@ -1,0 +1,22 @@
+id: gen_py_word_count
+category: code_gen
+lang: python
+title: "단어 빈도 카운터"
+prompt: |
+  표준입력으로 문자열을 받아 각 단어의 등장 횟수를 세어
+  알파벳 오름차순으로 "단어:횟수" 형식으로 한 줄씩 출력하라.
+  대소문자는 무시하고 소문자로 처리한다.
+
+  입력: Hello world hello
+  출력:
+  hello:2
+  world:1
+test_cases:
+  - input: "Hello world hello"
+    output: "hello:2\nworld:1"
+  - input: "a b c a b a"
+    output: "a:3\nb:2\nc:1"
+  - input: "one"
+    output: "one:1"
+timeout_sec: 10
+tags: [string, hash_map]

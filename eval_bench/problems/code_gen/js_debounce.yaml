@@ -1,0 +1,25 @@
+id: gen_js_debounce
+category: code_gen
+lang: javascript
+title: "Debounce 함수 구현"
+prompt: |
+  debounce(fn, delay) 함수를 구현하라. debounce된 함수를 연속 호출하면
+  마지막 호출 후 delay ms가 지난 뒤에만 fn이 실행된다.
+
+  아래 테스트 코드를 실행하면 정확히 아래 출력이 나와야 한다:
+
+  const log = [];
+  const debounced = debounce((x) => log.push(x), 50);
+  debounced(1);
+  debounced(2);
+  debounced(3);
+  setTimeout(() => {
+    console.log(log.join(','));
+  }, 200);
+
+  기대 출력: 3
+test_cases:
+  - input: ""
+    output: "3"
+timeout_sec: 10
+tags: [closures, async]

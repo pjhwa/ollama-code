@@ -1,0 +1,23 @@
+id: gen_bash_csv_column
+category: code_gen
+lang: bash
+title: "CSV 두 번째 컬럼 추출 (bash)"
+prompt: |
+  표준입력으로 CSV 데이터(헤더 포함)를 받아 두 번째 컬럼 값만
+  헤더를 제외하고 한 줄씩 출력하라.
+
+  입력:
+  name,age,city
+  alice,30,seoul
+  bob,25,busan
+
+  출력:
+  30
+  25
+test_cases:
+  - input: "name,age,city\nalice,30,seoul\nbob,25,busan"
+    output: "30\n25"
+  - input: "a,b\n1,2\n3,4"
+    output: "2\n4"
+timeout_sec: 10
+tags: [text_processing, csv]
