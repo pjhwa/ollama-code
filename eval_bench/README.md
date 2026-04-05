@@ -32,9 +32,16 @@ python eval.py --target bridge
 # 특정 문제
 python eval.py --id algo_py_fibonacci
 
+# thinking 모드 비활성화 (ollama-direct 10배 빠름, ~15s/문제)
+python eval.py --no-think
+
 # 상세 출력 (원본 LLM 응답 포함)
 python eval.py -v
 ```
+
+> **참고:** qwen3:14b는 기본적으로 thinking mode를 사용하므로 응답에 150-300초 소요됩니다.
+> `--no-think` 플래그로 thinking을 비활성화하면 응답이 10-20초로 단축됩니다.
+> bridge-proxy는 항상 thinking 결과를 처리하며, `--no-think`는 ollama-direct에만 적용됩니다.
 
 ## 평가 지표
 

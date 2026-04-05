@@ -17,8 +17,9 @@ prompt: |
           return a / b
   ```
 
-  위 클래스를 포함한 완전한 테스트 파일을 작성하라.
-  subprocess로 pytest를 실행하고 결과를 파싱해 모든 테스트가 통과하면 PASS를 출력하라.
+  위 클래스를 포함한 완전한 Python 스크립트를 작성하라.
+  assert를 직접 사용하고, ZeroDivisionError는 try/except로 확인하라.
+  모든 테스트가 통과하면 print("PASS")를 출력하라.
 test_cases:
   - input: ""
     output: "PASS"

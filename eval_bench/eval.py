@@ -52,6 +52,7 @@ def _run_target(
     model: str,
     timeout: int,
     verbose: bool,
+    think: bool = True,
 ) -> TargetRunRecord:
     """Call LLM, extract code, run tests, return TargetRunRecord."""
     # 1. Call LLM
@@ -63,6 +64,7 @@ def _run_target(
                 model=model,
                 ollama_url=ollama_url,
                 timeout=timeout,
+                think=think,
             )
         else:
             from clients.bridge_client import call
@@ -124,9 +126,11 @@ def main() -> None:
     parser.add_argument("--ollama-url", default="http://localhost:11434")
     parser.add_argument("--bridge-url", default="http://localhost:9099")
     parser.add_argument("--model", default="qwen3:14b")
-    parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--output-dir", default="reports")
     parser.add_argument("--no-html", action="store_true")
+    parser.add_argument("--no-think", action="store_true",
+                        help="Disable qwen3 thinking mode for faster ollama-direct responses")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -155,6 +159,7 @@ def main() -> None:
                 problem, target,
                 args.ollama_url, args.bridge_url,
                 args.model, args.timeout, args.verbose,
+                think=not args.no_think,
             )
             target_records.append(tr)
 

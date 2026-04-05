@@ -18,6 +18,6 @@ prompt: |
   시간 복잡도 문제와 개선된 O(n) 구현 방법을 설명하라.
 test_cases:
   - input: ""
-    output: "O(n),set,hash"
+    output: "O(n),해시"
 timeout_sec: 30
 tags: [performance, complexity]

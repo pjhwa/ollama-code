@@ -17,3 +17,4 @@ Thumbs.db
 # Logs
 *.log
 /tmp/
+eval_bench/reports/

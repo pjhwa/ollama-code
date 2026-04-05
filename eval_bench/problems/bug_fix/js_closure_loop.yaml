@@ -3,6 +3,7 @@ category: bug_fix
 lang: javascript
 title: "클로저 루프 버그 수정 (JS)"
 prompt: |
+  반드시 JavaScript로만 작성하라. Node.js에서 실행 가능한 완전한 JavaScript 프로그램을 작성하라.
   아래 코드는 0~4를 순서대로 출력하려 하지만 버그가 있다.
   버그를 수정하여 0 1 2 3 4를 한 줄씩 출력하는 코드를 작성하라.
 

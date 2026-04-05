@@ -19,10 +19,15 @@ def call(
     prompt: str,
     model: str = "qwen3:14b",
     ollama_url: str = "http://localhost:11434",
-    timeout: int = 120,
+    timeout: int = 600,
     system: str = "You are an expert programmer. Provide only the requested code.",
+    think: bool = True,
 ) -> LLMResponse:
-    """Call Ollama /api/chat with streaming. Returns LLMResponse."""
+    """Call Ollama /api/chat with streaming. Returns LLMResponse.
+
+    Args:
+        think: Enable qwen3 thinking mode. Set False for faster responses.
+    """
     url = f"{ollama_url.rstrip('/')}/api/chat"
     payload = {
         "model": model,
@@ -32,6 +37,7 @@ def call(
             {"role": "user", "content": prompt},
         ],
         "options": {"temperature": 0.1},
+        "think": think,
     }
     body = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})

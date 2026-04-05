@@ -3,6 +3,7 @@ category: algorithm
 lang: javascript
 title: "Two Sum"
 prompt: |
+  반드시 JavaScript로만 작성하라. Node.js에서 실행 가능한 완전한 JavaScript 프로그램을 작성하라.
   표준입력으로 첫째 줄에 공백으로 구분된 정수 배열, 둘째 줄에 target을 받는다.
   합이 target이 되는 두 수의 인덱스를 오름차순으로 공백 구분하여 출력하라.
   정답은 정확히 하나 존재한다.

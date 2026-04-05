@@ -3,6 +3,7 @@ category: algorithm
 lang: bash
 title: "중복 단어 찾기 (bash)"
 prompt: |
+  반드시 bash 스크립트만 사용하라. #!/bin/bash 로 시작하는 bash 스크립트를 작성하라.
   표준입력으로 공백으로 구분된 단어 목록을 받아, 2회 이상 등장하는 단어를
   알파벳 오름차순으로 한 줄씩 출력하라. 없으면 아무것도 출력하지 않는다.
 

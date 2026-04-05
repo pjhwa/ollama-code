@@ -22,10 +22,9 @@ prompt: |
       def size(self): return len(self._items)
   ```
 
-  위 Stack 클래스를 포함한 완전한 테스트 파일을 작성하라.
-  파일을 실행하면 "X passed" 형태의 pytest 출력에서 passed 개수를 출력한다.
-  최소 6개 테스트가 통과해야 한다.
-  힌트: subprocess로 pytest를 실행하고 통과한 테스트 수를 파싱하여 출력하라.
+  위 Stack 클래스를 포함한 완전한 Python 스크립트를 작성하라.
+  assert를 직접 사용하고, 예외 발생은 try/except로 테스트하라.
+  모든 테스트가 통과하면 print("PASS")를 출력하라.
 test_cases:
   - input: ""
     output: "PASS"
